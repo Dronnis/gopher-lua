@@ -9,6 +9,9 @@ func OpenMath(L *LState) int {
 	mod := L.RegisterModule(MathLibName, mathFuncs).(*LTable)
 	mod.RawSetString("pi", LNumberFloat(math.Pi))
 	mod.RawSetString("huge", LNumberFloat(math.MaxFloat64))
+	// Lua 5.3 integer constants
+	mod.RawSetString("maxinteger", LNumberInt(math.MaxInt64))
+	mod.RawSetString("mininteger", LNumberInt(math.MinInt64))
 	L.Push(mod)
 	return 1
 }
@@ -316,6 +319,7 @@ func mathUlt(L *LState) int {
 	b := L.CheckNumber(2)
 
 	// Convert to uint64 for unsigned comparison
+	// This handles negative numbers correctly as large positive values
 	ua := uint64(a.Int64())
 	ub := uint64(b.Int64())
 
