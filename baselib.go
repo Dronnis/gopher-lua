@@ -168,31 +168,50 @@ func loadaux(L *LState, reader io.Reader, chunkname string) int {
 }
 
 func baseLoad(L *LState) int {
-	fn := L.CheckFunction(1)
-	chunkname := L.OptString(2, "?")
-	top := L.GetTop()
-	buf := []string{}
-	for {
-		L.SetTop(top)
-		L.Push(fn)
-		L.Call(0, 1)
-		ret := L.reg.Pop()
-		if ret == LNil {
-			break
-		} else if LVCanConvToString(ret) {
-			str := ret.String()
-			if len(str) > 0 {
-				buf = append(buf, string(str))
-			} else {
+	// Lua 5.3 compatibility: load(chunk [, chunkname [, mode [, env]]])
+	// chunk can be a string or a function
+	chunk := L.Get(1)
+	var reader io.Reader
+	
+	switch c := chunk.(type) {
+	case LString:
+		// If chunk is a string, use it directly
+		reader = strings.NewReader(string(c))
+	case *LFunction:
+		// If chunk is a function, read from it
+		chunkname := L.OptString(2, "?")
+		top := L.GetTop()
+		buf := []string{}
+		for {
+			L.SetTop(top)
+			L.Push(c)
+			L.Call(0, 1)
+			ret := L.reg.Pop()
+			if ret == LNil {
 				break
+			} else if LVCanConvToString(ret) {
+				str := ret.String()
+				if len(str) > 0 {
+					buf = append(buf, string(str))
+				} else {
+					break
+				}
+			} else {
+				L.Push(LNil)
+				L.Push(LString("reader function must return a string"))
+				return 2
 			}
-		} else {
-			L.Push(LNil)
-			L.Push(LString("reader function must return a string"))
-			return 2
 		}
+		return loadaux(L, strings.NewReader(strings.Join(buf, "")), chunkname)
+	default:
+		L.Push(LNil)
+		L.Push(LString("bad argument #1 to load (function or string expected, got " + chunk.Type().String() + ")"))
+		return 2
 	}
-	return loadaux(L, strings.NewReader(strings.Join(buf, "")), chunkname)
+	
+	chunkname := L.OptString(2, "<load>")
+	// mode and env are ignored for compatibility
+	return loadaux(L, reader, chunkname)
 }
 
 func baseLoadFile(L *LState) int {
