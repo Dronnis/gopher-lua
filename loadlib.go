@@ -73,8 +73,9 @@ func OpenPackage(L *LState) int {
 }
 
 var loFuncs = map[string]LGFunction{
-	"loadlib": loLoadLib,
-	"seeall":  loSeeAll,
+	"loadlib":    loLoadLib,
+	"seeall":     loSeeAll,
+	"searchpath": loSearchPath,
 }
 
 func loLoaderPreload(L *LState) int {
@@ -121,6 +122,34 @@ func loSeeAll(L *LState) int {
 	}
 	L.SetField(mt, "__index", L.Get(GlobalsIndex))
 	return 0
+}
+
+// package.searchpath(name, path[, sep[, rep]])
+// Searches for the given name in the given path.
+func loSearchPath(L *LState) int {
+	name := L.CheckString(1)
+	path := L.CheckString(2)
+	sep := L.OptString(3, ".")
+	rep := L.OptString(4, string(os.PathSeparator))
+
+	// Replace separator in name with the replacement character
+	name = strings.Replace(name, sep, rep, -1)
+
+	messages := []string{}
+	for _, pattern := range strings.Split(string(path), ";") {
+		luapath := strings.Replace(pattern, "?", name, -1)
+		if _, err := os.Stat(luapath); err == nil {
+			L.Push(LString(luapath))
+			return 1
+		} else {
+			messages = append(messages, err.Error())
+		}
+	}
+
+	// Return nil and error message
+	L.Push(LNil)
+	L.Push(LString(strings.Join(messages, "\n\t")))
+	return 2
 }
 
 /* }}} */
