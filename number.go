@@ -45,10 +45,8 @@ func LNumberFromInterface(v interface{}) LNumber {
 	case float32:
 		return LNumberFloat(float64(val))
 	case float64:
-		// Check if it can be represented as integer
-		if val == float64(int64(val)) && !math.IsInf(val, 0) && !math.IsNaN(val) {
-			return LNumberInt(int64(val))
-		}
+		// In Lua 5.3, float values stay as float even if they represent whole numbers
+		// This preserves the type information from the source
 		return LNumberFloat(val)
 	case luaIntegerType:
 		return LNumber{value: val}

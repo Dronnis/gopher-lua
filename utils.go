@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -145,21 +144,29 @@ func isArrayKey(v LNumber) bool {
 
 func parseNumber(number string) (LNumber, error) {
 	number = strings.Trim(number, " \t\n")
-	
-	// Try to parse as integer first
+
+	// Check if the number contains a decimal point or exponent
+	// If so, parse as float to preserve type information
+	hasDecimal := strings.IndexByte(number, '.') >= 0
+	hasExponent := strings.IndexAny(number, "eE") >= 0
+
+	if hasDecimal || hasExponent {
+		// Parse as float to preserve type (1.0 stays float)
+		if v, err := strconv.ParseFloat(number, 64); err == nil {
+			return LNumberFloat(v), nil
+		}
+	}
+
+	// Try to parse as integer first (for pure integer literals like 123)
 	if v, err := strconv.ParseInt(number, 0, 64); err == nil {
 		return LNumberInt(v), nil
 	}
-	
-	// Try to parse as float
+
+	// Fall back to float
 	if v, err := strconv.ParseFloat(number, 64); err == nil {
-		// Check if it's actually an integer value
-		if v == float64(int64(v)) && !math.IsInf(v, 0) && !math.IsNaN(v) {
-			return LNumberInt(int64(v)), nil
-		}
 		return LNumberFloat(v), nil
 	}
-	
+
 	return LNumberInt(0), fmt.Errorf("invalid number format: %s", number)
 }
 
