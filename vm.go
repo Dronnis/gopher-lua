@@ -763,11 +763,11 @@ func init() {
 		opArith, // OP_MOD
 		opArith, // OP_POW
 		opArith, // OP_IDIV
-		opArith, // OP_BAND
-		opArith, // OP_BOR
-		opArith, // OP_BXOR
-		opArith, // OP_SHL
-		opArith, // OP_SHR
+		opBitwise, // OP_BAND
+		opBitwise, // OP_BOR
+		opBitwise, // OP_BXOR
+		opBitwise, // OP_SHL
+		opBitwise, // OP_SHR
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_BNOT
 			reg := L.reg
 			cf := L.currentFrame
@@ -776,29 +776,32 @@ func init() {
 			RA := lbase + A
 			B := int(inst & 0x1ff) //GETB
 			unaryv := L.rkValue(B)
-			if nm, ok := unaryv.(LNumber); ok {
-				// this section is inlined by go-inline
-				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
+			// Lua 5.3: bitwise operations coerce strings to numbers
+			var nm LNumber
+			switch v := unaryv.(type) {
+			case LNumber:
+				nm = v
+			case LString:
+				nm = LVAsNumber(unaryv)
+			default:
+				L.RaiseError("attempt to perform bitwise operation on a %v value", unaryv.Type().String())
+				return 0
+			}
+			{
+				rg := reg
+				regi := RA
+				vali := nm.Bnot()
+				newSize := regi + 1
 				{
-					rg := reg
-					regi := RA
-					vali := nm.Bnot()
-					newSize := regi + 1
-					// this section is inlined by go-inline
-					// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
-					{
-						requiredSize := newSize
-						if requiredSize > cap(rg.array) {
-							rg.resize(requiredSize)
-						}
-					}
-					rg.array[regi] = vali
-					if regi >= rg.top {
-						rg.top = regi + 1
+					requiredSize := newSize
+					if requiredSize > cap(rg.array) {
+						rg.resize(requiredSize)
 					}
 				}
-			} else {
-				L.RaiseError("attempt to perform bitwise operation on a %v value", unaryv.Type().String())
+				rg.array[regi] = vali
+				if regi >= rg.top {
+					rg.top = regi + 1
+				}
 			}
 			return 0
 		},
@@ -2312,6 +2315,89 @@ func opArith(L *LState, inst uint32, baseframe *callFrame) int { //OP_ADD, OP_SU
 	return 0
 }
 
+func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP_BOR, OP_BXOR, OP_SHL, OP_SHR
+	reg := L.reg
+	cf := L.currentFrame
+	lbase := cf.LocalBase
+	A := int(inst>>18) & 0xff //GETA
+	RA := lbase + A
+	opcode := int(inst >> 26) //GETOPCODE
+	B := int(inst & 0x1ff)    //GETB
+	C := int(inst>>9) & 0x1ff //GETC
+	lhs := L.rkValue(B)
+	rhs := L.rkValue(C)
+	// Lua 5.3: bitwise operations coerce strings to numbers
+	var v1, v2 LNumber
+	switch lv := lhs.(type) {
+	case LNumber:
+		v1 = lv
+	case LString:
+		v1 = LVAsNumber(lhs)
+	default:
+		v := objectArith(L, opcode, lhs, rhs)
+		{
+			rg := reg
+			regi := RA
+			vali := v
+			newSize := regi + 1
+			{
+				requiredSize := newSize
+				if requiredSize > cap(rg.array) {
+					rg.resize(requiredSize)
+				}
+			}
+			rg.array[regi] = vali
+			if regi >= rg.top {
+				rg.top = regi + 1
+			}
+		}
+		return 0
+	}
+	switch rv := rhs.(type) {
+	case LNumber:
+		v2 = rv
+	case LString:
+		v2 = LVAsNumber(rhs)
+	default:
+		v := objectArith(L, opcode, lhs, rhs)
+		{
+			rg := reg
+			regi := RA
+			vali := v
+			newSize := regi + 1
+			{
+				requiredSize := newSize
+				if requiredSize > cap(rg.array) {
+					rg.resize(requiredSize)
+				}
+			}
+			rg.array[regi] = vali
+			if regi >= rg.top {
+				rg.top = regi + 1
+			}
+		}
+		return 0
+	}
+	v := numberArith(L, opcode, v1, v2)
+	{
+		rg := reg
+		regi := RA
+		vali := v
+		newSize := regi + 1
+		{
+			requiredSize := newSize
+			if requiredSize > cap(rg.array) {
+				rg.resize(requiredSize)
+			}
+		}
+		rg.array[regi] = rg.alloc.LNumber2I(vali)
+		if regi >= rg.top {
+			rg.top = regi + 1
+		}
+	}
+	return 0
+}
+
 func luaModulo(lhs, rhs LNumber) LNumber {
 	return lhs.Mod(rhs)
 }
@@ -2362,12 +2448,18 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		event = "__mod"
 	case OP_POW:
 		event = "__pow"
+	case OP_IDIV:
+		event = "__idiv"
 	case OP_BAND:
 		event = "__band"
 	case OP_BOR:
 		event = "__bor"
 	case OP_BXOR:
 		event = "__bxor"
+	case OP_SHL:
+		event = "__shl"
+	case OP_SHR:
+		event = "__shr"
 	}
 	op := L.metaOp2(lhs, rhs, event)
 	if _, ok := op.(*LFunction); ok {
@@ -2377,6 +2469,7 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		L.Call(2, 1)
 		return L.reg.Pop()
 	}
+	// Lua 5.3: coerce strings to numbers for arithmetic and bitwise operations
 	if str, ok := lhs.(LString); ok {
 		if lnum, err := parseNumber(string(str)); err == nil {
 			lhs = lnum

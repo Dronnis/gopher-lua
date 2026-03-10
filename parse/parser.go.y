@@ -62,11 +62,11 @@ import (
 %token<token> Ttilde T2LessThan T2GreaterThan Tpipe Tampersand
 %left TOr
 %left TAnd
+%left '>' '<' TGte TLte TEqeq TNeq
 %left Tpipe /* bitwise or */
 %left Ttilde /* bitwise xor */
 %left Tampersand /* bitwise and */
 %left T2LessThan T2GreaterThan /* shifts */
-%left '>' '<' TGte TLte TEqeq TNeq
 %right T2Comma
 %left '+' '-'
 %left '*' '%' T2Slash '/'
