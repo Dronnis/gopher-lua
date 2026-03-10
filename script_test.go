@@ -41,13 +41,13 @@ var luaTests []string = []string{
 	"vararg.lua",
 	"pm.lua",
 	"files.lua",
-	//"bitwise.lua",
-	//"bwcoercion.lua",
-	//"coroutine.lua",
-	//"goto.lua",
-	//"heavy.lua",
-	//"tpack.lua",
-	//"utf8.lua",
+	"bitwise.lua",
+	"bwcoercion.lua",
+	"coroutine.lua",
+	"goto.lua",
+	"heavy.lua",
+	"tpack.lua",
+	"utf8.lua",
 }
 
 func testScriptCompile(t *testing.T, script string) {
