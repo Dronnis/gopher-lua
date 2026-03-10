@@ -81,7 +81,7 @@ local bigtable = {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
                   1,1,1,1,1,1,1,1,1,1,1,1,10}
 assert(bigtable[601] == 10)
 
-local ok, msg = loadstring([[
+local ok, msg = load([[
   function main(
      a1,  a2,  a3,  a4,  a5,  a6,  a7,  a8,
      a9,  a10,  a11,  a12,  a13,  a14,  a15,  a16,
@@ -125,10 +125,10 @@ local ok, msg = loadstring([[
      a286,  a287,  a288,  a289,  a290,  a291,  a292,
      a293,  a294,  a295,  a296,  a297,  a298,  a299,
      a300,  a301,  a302) end
-]]) 
+]])
 assert(not ok and string.find(msg, "register overflow"))
 
-local ok, msg = loadstring([[
+local ok, msg = load([[
    function main()
      local a = {...}
    end

@@ -1,12 +1,11 @@
 -- debug lib tests
 -- debug stuff are  partially implemented; hooks are not supported.
 
+-- In Lua 5.3, setfenv/getfenv are removed. Use _ENV for environment manipulation.
+-- Testing debug.setmetatable/getmetatable instead
 local function f1()
 end
-local env = {}
 local mt = {}
-debug.setfenv(f1, env)
-assert(debug.getfenv(f1) == env)
 debug.setmetatable(f1, mt)
 assert(debug.getmetatable(f1) == mt)
 

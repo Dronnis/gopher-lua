@@ -3,8 +3,9 @@ local ok, msg = pcall(function()
 end)
 assert(not ok and string.find(msg, ".*notexist.*"))
 
+-- In Lua 5.3, use _ENV for environment access instead of getfenv
 local ok, msg = pcall(function()
-  assert(getfenv(2) == _G)
+  assert(_ENV == _G)
 end)
 assert(ok)
 
