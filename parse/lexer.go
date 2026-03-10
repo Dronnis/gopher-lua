@@ -35,6 +35,8 @@ func writeChar(buf *bytes.Buffer, c int) { buf.WriteByte(byte(c)) }
 
 func isDecimal(ch int) bool { return '0' <= ch && ch <= '9' }
 
+func isHex(ch int) bool { return '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'f' || 'A' <= ch && ch <= 'F' }
+
 func isIdent(ch int, pos int) bool {
 	return ch == '_' || 'A' <= ch && ch <= 'Z' || 'a' <= ch && ch <= 'z' || isDecimal(ch) && pos > 0
 }
@@ -156,9 +158,44 @@ func (sc *Scanner) scanNumber(ch int, buf *bytes.Buffer) error {
 			writeChar(buf, ch)
 			writeChar(buf, sc.Next())
 			hasvalue := false
+			// Lua 5.3: hex numbers can start with 0x.digit (e.g., 0x.41)
+			if sc.Peek() == '.' {
+				writeChar(buf, sc.Next())
+				for isHex(sc.Peek()) {
+					writeChar(buf, sc.Next())
+					hasvalue = true
+				}
+				// Lua 5.3: hex numbers can have binary exponent p/P
+				if sc.Peek() == 'p' || sc.Peek() == 'P' {
+					writeChar(buf, sc.Next())
+					if sc.Peek() == '-' || sc.Peek() == '+' {
+						writeChar(buf, sc.Next())
+					}
+					sc.scanDecimal(sc.Next(), buf)
+				}
+				if !hasvalue {
+					return sc.Error(buf.String(), "illegal hexadecimal number")
+				}
+				return nil
+			}
+			// Lua 5.3: hex numbers can have fractional part (e.g., 0x10.41p2)
 			for isDigit(sc.Peek()) {
 				writeChar(buf, sc.Next())
 				hasvalue = true
+			}
+			if sc.Peek() == '.' {
+				writeChar(buf, sc.Next())
+				for isHex(sc.Peek()) {
+					writeChar(buf, sc.Next())
+				}
+			}
+			// Lua 5.3: hex numbers can have binary exponent p/P
+			if sc.Peek() == 'p' || sc.Peek() == 'P' {
+				writeChar(buf, sc.Next())
+				if sc.Peek() == '-' || sc.Peek() == '+' {
+					writeChar(buf, sc.Next())
+				}
+				sc.scanDecimal(sc.Next(), buf)
 			}
 			if !hasvalue {
 				return sc.Error(buf.String(), "illegal hexadecimal number")
@@ -224,6 +261,16 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 		buf.WriteByte('"')
 	case '\'':
 		buf.WriteByte('\'')
+	case 'z':
+		// \z skips all following whitespace characters (Lua 5.3 feature)
+		for {
+			ch = sc.Peek()
+			if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' || ch == '\v' {
+				sc.Next()
+			} else {
+				break
+			}
+		}
 	case '\n':
 		buf.WriteByte('\n')
 	case '\r':
