@@ -10,7 +10,7 @@ import (
 
 /* internal constants & structs  {{{ */
 
-const maxRegisters = 200
+const maxRegisters = 250
 
 type expContextType int
 
@@ -22,6 +22,7 @@ const (
 	ecVararg
 	ecMethod
 	ecNone
+	ecEnv // Lua 5.3: access via _ENV
 )
 
 const regNotDefined = opMaxArgsA + 1
@@ -438,6 +439,31 @@ func (fc *funcContext) CheckUnresolvedGoto() {
 	}
 }
 
+// getEnvUpvalue returns or creates the _ENV upvalue for Lua 5.3 environment access
+func (fc *funcContext) getEnvUpvalue() int {
+	// First, check if _ENV is already registered in this context
+	idx := fc.Upvalues.Find("_ENV")
+	if idx != -1 {
+		return idx
+	}
+	
+	// For nested functions, _ENV should be captured from parent
+	current := fc.Parent
+	for current != nil {
+		idx = current.Upvalues.Find("_ENV")
+		if idx != -1 {
+			// Found _ENV in parent, register as upvalue in this context
+			// This will be resolved at runtime when the closure is created
+			return fc.Upvalues.RegisterUnique("_ENV")
+		}
+		current = current.Parent
+	}
+	
+	// _ENV not found in any parent - this is the main chunk
+	// Register _ENV as the first upvalue
+	return fc.Upvalues.RegisterUnique("_ENV")
+}
+
 func (fc *funcContext) AddUnresolvedGoto(label *gotoLabelDesc) {
 	fc.unresolvedGotos[fc.gotosCount] = label
 	fc.gotosCount++
@@ -798,6 +824,20 @@ func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 			reg -= 1
 		case ecUpvalue:
 			code.AddABC(OP_SETUPVAL, reg, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
+			reg -= 1
+		case ecEnv:
+			// Lua 5.3: set global via _ENV[key] = value
+			// Value is already in 'reg' from RHS compilation
+			// Use reg+1 and reg+2 for temporaries to avoid overwriting the value
+			envreg := context.getEnvUpvalue()
+			envreg_slot := reg + 1
+			keyreg := reg + 2
+			// Get _ENV into envreg_slot
+			code.AddABC(OP_GETUPVAL, envreg_slot, envreg, 0, sline(ex))
+			// Load the key
+			code.AddABx(OP_LOADK, keyreg, context.ConstIndex(LString(ex.(*ast.IdentExpr).Value)), sline(ex))
+			// SETTABLE _ENV[key] = value (reg)
+			code.AddABC(OP_SETTABLE, envreg_slot, keyreg, reg, sline(ex))
 			reg -= 1
 		case ecTable:
 			opcode := OP_SETTABLE
@@ -1170,14 +1210,35 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 		code.AddABC(OP_LOADBOOL, sreg, 1, 0, sline(ex))
 		return sused
 	case *ast.IdentExpr:
-		switch getIdentRefType(context, context, ex) {
-		case ecGlobal:
-			code.AddABx(OP_GETGLOBAL, sreg, context.ConstIndex(LString(ex.Value)), sline(ex))
-		case ecUpvalue:
-			code.AddABC(OP_GETUPVAL, sreg, context.Upvalues.RegisterUnique(ex.Value), 0, sline(ex))
-		case ecLocal:
-			b := context.FindLocalVar(ex.Value)
-			code.AddABC(OP_MOVE, sreg, b, 0, sline(ex))
+		refType := getIdentRefType(context, context, ex)
+		// Special case: accessing _ENV itself should return the _ENV upvalue directly
+		if ex.Value == "_ENV" && refType == ecEnv {
+			// _ENV is not local, so it must be an upvalue (or will be at runtime)
+			envreg := context.getEnvUpvalue()
+			code.AddABC(OP_GETUPVAL, sreg, envreg, 0, sline(ex))
+		} else {
+			switch refType {
+			case ecGlobal:
+				code.AddABx(OP_GETGLOBAL, sreg, context.ConstIndex(LString(ex.Value)), sline(ex))
+			case ecUpvalue:
+				code.AddABC(OP_GETUPVAL, sreg, context.Upvalues.RegisterUnique(ex.Value), 0, sline(ex))
+			case ecLocal:
+				b := context.FindLocalVar(ex.Value)
+				code.AddABC(OP_MOVE, sreg, b, 0, sline(ex))
+			case ecEnv:
+				// Lua 5.3: access global via _ENV[key]
+				// Result goes to sreg, use sreg+1 for temporaries
+				envreg := context.getEnvUpvalue()
+				envreg_slot := sreg + 1
+				keyreg := sreg + 2
+				// Get _ENV into envreg_slot
+				code.AddABC(OP_GETUPVAL, envreg_slot, envreg, 0, sline(ex))
+				// Load the key
+				code.AddABx(OP_LOADK, keyreg, context.ConstIndex(LString(ex.Value)), sline(ex))
+				// GETTABLE sreg = envreg_slot[keyreg]
+				code.AddABC(OP_GETTABLE, sreg, envreg_slot, keyreg, sline(ex))
+				return 1  // Result is in sreg
+			}
 		}
 		return sused
 	case *ast.Comma3Expr:
@@ -1343,6 +1404,11 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 			}
 		}
 		context.Proto.IsVarArg |= VarArgIsVarArg
+	}
+
+	// Lua 5.3: _ENV is always the first upvalue for main chunks
+	if context.Parent == nil {
+		context.Upvalues.RegisterUnique("_ENV")
 	}
 
 	compileChunk(context, funcexpr.Stmts, false)
@@ -1783,7 +1849,14 @@ func loadRk(context *funcContext, reg *int, expr ast.Expr, cnst LValue) int { //
 
 func getIdentRefType(context *funcContext, current *funcContext, expr *ast.IdentExpr) expContextType { // {{{
 	if current == nil {
-		return ecGlobal
+		// In Lua 5.3, global variables are accessed via _ENV
+		// _ENV itself follows normal scoping rules
+		if expr.Value == "_ENV" {
+			// _ENV not found in any scope - this shouldn't happen in normal Lua 5.3
+			// but we'll treat it as a global access via _ENV (which will be nil/empty)
+			return ecEnv
+		}
+		return ecEnv // Use _ENV for global access
 	} else if current.FindLocalVar(expr.Value) > -1 {
 		if current == context {
 			return ecLocal

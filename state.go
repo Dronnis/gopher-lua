@@ -2022,7 +2022,20 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
-	return newLFunctionL(proto, ls.currentEnv(), 0), nil
+	fn := newLFunctionL(proto, ls.currentEnv(), int(proto.NumUpvalues))
+	// Initialize _ENV upvalue for Lua 5.3
+	// In Lua 5.3, _ENV is always the first upvalue for main chunks
+	// Use ls.G.Global to match where modules are registered
+	for i := 0; i < len(fn.Upvalues) && i < len(proto.DbgUpvalues); i++ {
+		if proto.DbgUpvalues[i] == "_ENV" {
+			// Create a closed upvalue that points to ls.G.Global
+			uv := &Upvalue{}
+			uv.closed = true
+			uv.value = ls.G.Global
+			fn.Upvalues[i] = uv
+		}
+	}
+	return fn, nil
 }
 
 func (ls *LState) Call(nargs, nret int) {
