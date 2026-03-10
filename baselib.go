@@ -91,7 +91,7 @@ func baseError(L *LState) int {
 func baseGetFEnv(L *LState) int {
 	var value LValue
 	if L.GetTop() == 0 {
-		value = LNumber(1)
+		value = LNumberInt(1)
 	} else {
 		value = L.Get(1)
 	}
@@ -106,7 +106,7 @@ func baseGetFEnv(L *LState) int {
 	}
 
 	if number, ok := value.(LNumber); ok {
-		level := int(float64(number))
+		level := int(number.Int64())
 		if level <= 0 {
 			L.Push(L.Env)
 		} else {
@@ -141,8 +141,8 @@ func ipairsaux(L *LState) int {
 		return 0
 	} else {
 		L.Pop(1)
-		L.Push(LNumber(i))
-		L.Push(LNumber(i))
+		L.Push(LNumberInt(int64(i)))
+		L.Push(LNumberInt(int64(i)))
 		L.Push(v)
 		return 2
 	}
@@ -152,7 +152,7 @@ func baseIpairs(L *LState) int {
 	tb := L.CheckTable(1)
 	L.Push(L.Get(UpvalueIndex(1)))
 	L.Push(tb)
-	L.Push(LNumber(0))
+	L.Push(LNumberInt(0))
 	return 3
 }
 
@@ -260,7 +260,7 @@ func basePairs(L *LState) int {
 func basePCall(L *LState) int {
 	L.CheckAny(1)
 	v := L.Get(1)
-	if v.Type() != LTFunction && L.GetMetaField(v, "__call").Type() != LTFunction {
+	if v == LNil || (v.Type() != LTFunction && L.GetMetaField(v, "__call").Type() != LTFunction) {
 		L.Push(LFalse)
 		L.Push(LString("attempt to call a " + v.Type().String() + " value"))
 		return 2
@@ -283,7 +283,17 @@ func basePCall(L *LState) int {
 func basePrint(L *LState) int {
 	top := L.GetTop()
 	for i := 1; i <= top; i++ {
-		fmt.Print(L.ToStringMeta(L.Get(i)).String())
+		lv := L.Get(i)
+		var s string
+		if lv == LNil {
+			s = "nil"
+		} else {
+			s = LVAsString(lv)
+			if s == "" && lv.Type() != LTString {
+				s = lv.String()
+			}
+		}
+		fmt.Print(s)
 		if i != top {
 			fmt.Print("\t")
 		}
@@ -320,7 +330,7 @@ func baseSelect(L *LState) int {
 	L.CheckTypes(1, LTNumber, LTString)
 	switch lv := L.Get(1).(type) {
 	case LNumber:
-		idx := int(lv)
+		idx := int(lv.Int64())
 		num := L.GetTop()
 		if idx < 0 {
 			idx = num + idx
@@ -335,7 +345,7 @@ func baseSelect(L *LState) int {
 		if string(lv) != "#" {
 			L.ArgError(1, "invalid string '"+string(lv)+"'")
 		}
-		L.Push(LNumber(L.GetTop() - 1))
+		L.Push(LNumberInt(int64(L.GetTop() - 1)))
 		return 1
 	}
 	return 0
@@ -344,7 +354,7 @@ func baseSelect(L *LState) int {
 func baseSetFEnv(L *LState) int {
 	var value LValue
 	if L.GetTop() == 0 {
-		value = LNumber(1)
+		value = LNumberInt(1)
 	} else {
 		value = L.Get(1)
 	}
@@ -361,7 +371,7 @@ func baseSetFEnv(L *LState) int {
 	}
 
 	if number, ok := value.(LNumber); ok {
-		level := int(float64(number))
+		level := int(number.Int64())
 		if level <= 0 {
 			L.Env = env
 			return 0
@@ -411,19 +421,24 @@ func baseToNumber(L *LState) int {
 	case LString:
 		str := strings.Trim(string(lv), " \n\t")
 		if strings.Index(str, ".") > -1 {
-			if v, err := strconv.ParseFloat(str, LNumberBit); err != nil {
+			if v, err := strconv.ParseFloat(str, 64); err != nil {
 				L.Push(LNil)
 			} else {
-				L.Push(LNumber(v))
+				L.Push(LNumberFloat(v))
 			}
 		} else {
+			// Check for hex prefix 0x or 0X
 			if noBase && strings.HasPrefix(strings.ToLower(str), "0x") {
-				base, str = 16, str[2:] // Hex number
+				base, str = 16, str[2:]
 			}
-			if v, err := strconv.ParseInt(str, base, LNumberBit); err != nil {
+			// Also check for standalone hex numbers like "0xF"
+			if noBase && len(str) > 1 && str[0] == '0' && (str[1] == 'x' || str[1] == 'X') {
+				base, str = 16, str[2:]
+			}
+			if v, err := strconv.ParseInt(str, base, 64); err != nil {
 				L.Push(LNil)
 			} else {
-				L.Push(LNumber(v))
+				L.Push(LNumberInt(v))
 			}
 		}
 	default:
@@ -434,12 +449,26 @@ func baseToNumber(L *LState) int {
 
 func baseToString(L *LState) int {
 	v1 := L.CheckAny(1)
-	L.Push(L.ToStringMeta(v1))
+	if v1 == LNil {
+		L.Push(LString("nil"))
+	} else {
+		s := LVAsString(v1)
+		if s == "" && v1.Type() != LTString {
+			s = v1.String()
+		}
+		L.Push(LString(s))
+	}
 	return 1
 }
 
 func baseType(L *LState) int {
-	L.Push(LString(L.CheckAny(1).Type().String()))
+	lv := L.CheckAny(1)
+	if lv == LNil {
+		L.Push(LString("nil"))
+	} else {
+		t := lv.Type()
+		L.Push(LString(t.String()))
+	}
 	return 1
 }
 

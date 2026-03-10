@@ -762,6 +762,46 @@ func init() {
 		opArith, // OP_DIV
 		opArith, // OP_MOD
 		opArith, // OP_POW
+		opArith, // OP_IDIV
+		opArith, // OP_BAND
+		opArith, // OP_BOR
+		opArith, // OP_BXOR
+		opArith, // OP_SHL
+		opArith, // OP_SHR
+		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_BNOT
+			reg := L.reg
+			cf := L.currentFrame
+			lbase := cf.LocalBase
+			A := int(inst>>18) & 0xff //GETA
+			RA := lbase + A
+			B := int(inst & 0x1ff) //GETB
+			unaryv := L.rkValue(B)
+			if nm, ok := unaryv.(LNumber); ok {
+				// this section is inlined by go-inline
+				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
+				{
+					rg := reg
+					regi := RA
+					vali := nm.Bnot()
+					newSize := regi + 1
+					// this section is inlined by go-inline
+					// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
+					{
+						requiredSize := newSize
+						if requiredSize > cap(rg.array) {
+							rg.resize(requiredSize)
+						}
+					}
+					rg.array[regi] = vali
+					if regi >= rg.top {
+						rg.top = regi + 1
+					}
+				}
+			} else {
+				L.RaiseError("attempt to perform bitwise operation on a %v value", unaryv.Type().String())
+			}
+			return 0
+		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_UNM
 			reg := L.reg
 			cf := L.currentFrame
@@ -776,7 +816,7 @@ func init() {
 				{
 					rg := reg
 					regi := RA
-					vali := -nm
+					vali := nm.Unm()
 					newSize := regi + 1
 					// this section is inlined by go-inline
 					// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
@@ -824,7 +864,7 @@ func init() {
 						{
 							rg := reg
 							regi := RA
-							vali := -num
+							vali := num.Unm()
 							newSize := regi + 1
 							// this section is inlined by go-inline
 							// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
@@ -914,7 +954,7 @@ func init() {
 				{
 					rg := reg
 					regi := RA
-					vali := LNumber(len(lv))
+					vali := LNumberInt(int64(len(lv)))
 					newSize := regi + 1
 					// this section is inlined by go-inline
 					// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
@@ -986,7 +1026,7 @@ func init() {
 					{
 						rg := reg
 						regi := RA
-						vali := LNumber(lv.(*LTable).Len())
+						vali := LNumberInt(int64(lv.(*LTable).Len()))
 						newSize := regi + 1
 						// this section is inlined by go-inline
 						// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
@@ -1087,7 +1127,12 @@ func init() {
 
 			if v1, ok1 := lhs.(LNumber); ok1 {
 				if v2, ok2 := rhs.(LNumber); ok2 {
-					ret = v1 <= v2
+					// NaN comparisons always return false
+					if math.IsNaN(v1.Float64()) || math.IsNaN(v2.Float64()) {
+						ret = false
+					} else {
+						ret = v1.Compare(v2) <= 0
+					}
 				} else {
 					L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
 				}
@@ -1290,7 +1335,7 @@ func init() {
 									for i := 0; i < nvarargs; i++ {
 										argtb.RawSetInt(i+1, ls.reg.Get(cf.LocalBase+np+i))
 									}
-									argtb.RawSetString("n", LNumber(nvarargs))
+									argtb.RawSetString("n", LNumberInt(int64(nvarargs)))
 									//ls.reg.Set(cf.LocalBase+nargs+np, argtb)
 									ls.reg.array[cf.LocalBase+nargs+np] = argtb
 								} else {
@@ -1472,7 +1517,7 @@ func init() {
 									for i := 0; i < nvarargs; i++ {
 										argtb.RawSetInt(i+1, ls.reg.Get(cf.LocalBase+np+i))
 									}
-									argtb.RawSetString("n", LNumber(nvarargs))
+									argtb.RawSetString("n", LNumberInt(int64(nvarargs)))
 									//ls.reg.Set(cf.LocalBase+nargs+np, argtb)
 									ls.reg.array[cf.LocalBase+nargs+np] = argtb
 								} else {
@@ -1798,8 +1843,8 @@ func init() {
 			if init, ok1 := reg.Get(RA).(LNumber); ok1 {
 				if limit, ok2 := reg.Get(RA + 1).(LNumber); ok2 {
 					if step, ok3 := reg.Get(RA + 2).(LNumber); ok3 {
-						init += step
-						v := LNumber(init)
+						init = init.Add(step)
+						v := init
 						// this section is inlined by go-inline
 						// source function is 'func (rg *registry) SetNumber(regi int, vali LNumber) ' in '_state.go'
 						{
@@ -1820,7 +1865,7 @@ func init() {
 								rg.top = regi + 1
 							}
 						}
-						if (step > 0 && init <= limit) || (step <= 0 && init >= limit) {
+						if (step.Float64() > 0 && init.Compare(limit) <= 0) || (step.Float64() <= 0 && init.Compare(limit) >= 0) {
 							Sbx := int(inst&0x3ffff) - opMaxArgSbx //GETSBX
 							cf.Pc += Sbx
 							// this section is inlined by go-inline
@@ -1900,7 +1945,7 @@ func init() {
 					{
 						rg := reg
 						regi := RA
-						vali := LNumber(init - step)
+						vali := init.Sub(step)
 						newSize := regi + 1
 						// this section is inlined by go-inline
 						// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
@@ -2206,7 +2251,7 @@ func init() {
 	}
 }
 
-func opArith(L *LState, inst uint32, baseframe *callFrame) int { //OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_POW
+func opArith(L *LState, inst uint32, baseframe *callFrame) int { //OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_MOD, OP_POW, OP_IDIV
 	reg := L.reg
 	cf := L.currentFrame
 	lbase := cf.LocalBase
@@ -2268,34 +2313,38 @@ func opArith(L *LState, inst uint32, baseframe *callFrame) int { //OP_ADD, OP_SU
 }
 
 func luaModulo(lhs, rhs LNumber) LNumber {
-	flhs := float64(lhs)
-	frhs := float64(rhs)
-	v := math.Mod(flhs, frhs)
-	if frhs > 0 && v < 0 || frhs < 0 && v > 0 {
-		v += frhs
-	}
-	return LNumber(v)
+	return lhs.Mod(rhs)
 }
 
 func numberArith(L *LState, opcode int, lhs, rhs LNumber) LNumber {
 	switch opcode {
 	case OP_ADD:
-		return lhs + rhs
+		return lhs.Add(rhs)
 	case OP_SUB:
-		return lhs - rhs
+		return lhs.Sub(rhs)
 	case OP_MUL:
-		return lhs * rhs
+		return lhs.Mul(rhs)
 	case OP_DIV:
-		return lhs / rhs
+		return lhs.Div(rhs)
 	case OP_MOD:
 		return luaModulo(lhs, rhs)
 	case OP_POW:
-		flhs := float64(lhs)
-		frhs := float64(rhs)
-		return LNumber(math.Pow(flhs, frhs))
+		return lhs.Pow(rhs)
+	case OP_IDIV:
+		return lhs.IDiv(rhs)
+	case OP_BAND:
+		return lhs.Band(rhs)
+	case OP_BOR:
+		return lhs.Bor(rhs)
+	case OP_BXOR:
+		return lhs.Bxor(rhs)
+	case OP_SHL:
+		return lhs.Shl(rhs)
+	case OP_SHR:
+		return lhs.Shr(rhs)
 	}
 	panic("should not reach here")
-	return LNumber(0)
+	return LNumberInt(0)
 }
 
 func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
@@ -2313,6 +2362,12 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		event = "__mod"
 	case OP_POW:
 		event = "__pow"
+	case OP_BAND:
+		event = "__band"
+	case OP_BOR:
+		event = "__bor"
+	case OP_BXOR:
+		event = "__bxor"
 	}
 	op := L.metaOp2(lhs, rhs, event)
 	if _, ok := op.(*LFunction); ok {
@@ -2384,7 +2439,11 @@ func lessThan(L *LState, lhs, rhs LValue) bool {
 	// optimization for numbers
 	if v1, ok1 := lhs.(LNumber); ok1 {
 		if v2, ok2 := rhs.(LNumber); ok2 {
-			return v1 < v2
+			// NaN comparisons always return false
+			if math.IsNaN(v1.Float64()) || math.IsNaN(v2.Float64()) {
+				return false
+			}
+			return v1.Compare(v2) < 0
 		}
 		L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
 	}
@@ -2415,7 +2474,7 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 	case LTNumber:
 		v1, _ := lhs.(LNumber)
 		v2, _ := rhs.(LNumber)
-		ret = v1 == v2
+		ret = v1.Equal(v2)
 	case LTBool:
 		ret = bool(lhs.(LBool)) == bool(rhs.(LBool))
 	case LTString:

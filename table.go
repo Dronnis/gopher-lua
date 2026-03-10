@@ -93,7 +93,7 @@ func (tb *LTable) Insert(i int, value LValue) {
 		return
 	}
 	if i <= 0 {
-		tb.RawSet(LNumber(i), value)
+		tb.RawSet(LNumberInt(int64(i)), value)
 		return
 	}
 	i -= 1
@@ -151,7 +151,7 @@ func (tb *LTable) RawSet(key LValue, value LValue) {
 			if tb.array == nil {
 				tb.array = make([]LValue, 0, defaultArrayCap)
 			}
-			index := int(v) - 1
+			index := int(v.Int64()) - 1
 			alen := len(tb.array)
 			switch {
 			case index == alen:
@@ -177,7 +177,7 @@ func (tb *LTable) RawSet(key LValue, value LValue) {
 // RawSetInt sets a given LValue at a position `key` without the __newindex metamethod.
 func (tb *LTable) RawSetInt(key int, value LValue) {
 	if key < 1 || key >= MaxArrayIndex {
-		tb.RawSetH(LNumber(key), value)
+		tb.RawSetH(LNumberInt(int64(key)), value)
 		return
 	}
 	if tb.array == nil {
@@ -255,7 +255,7 @@ func (tb *LTable) RawGet(key LValue) LValue {
 			if tb.array == nil {
 				return LNil
 			}
-			index := int(v) - 1
+			index := int(v.Int64()) - 1
 			if index >= len(tb.array) {
 				return LNil
 			}
@@ -327,7 +327,7 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 	if tb.array != nil {
 		for i, v := range tb.array {
 			if v != LNil {
-				cb(LNumber(i+1), v)
+				cb(LNumberInt(int64(i+1)), v)
 			}
 		}
 	}
@@ -351,17 +351,17 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 func (tb *LTable) Next(key LValue) (LValue, LValue) {
 	init := false
 	if key == LNil {
-		key = LNumber(0)
+		key = LNumberInt(0)
 		init = true
 	}
 
-	if init || key != LNumber(0) {
-		if kv, ok := key.(LNumber); ok && isInteger(kv) && int(kv) >= 0 && kv < LNumber(MaxArrayIndex) {
-			index := int(kv)
+	if init || key != LNumberInt(0) {
+		if kv, ok := key.(LNumber); ok && isInteger(kv) && int(kv.Int64()) >= 0 && kv.Int64() < int64(MaxArrayIndex) {
+			index := int(kv.Int64())
 			if tb.array != nil {
 				for ; index < len(tb.array); index++ {
 					if v := tb.array[index]; v != LNil {
-						return LNumber(index + 1), v
+						return LNumberInt(int64(index + 1)), v
 					}
 				}
 			}

@@ -17,7 +17,7 @@ func getIntField(L *LState, tb *LTable, key string, v int) int {
 
 	switch lv := ret.(type) {
 	case LNumber:
-		return int(lv)
+		return int(lv.Int64())
 	case LString:
 		slv := string(lv)
 		slv = strings.TrimLeft(slv, " ")
@@ -29,7 +29,7 @@ func getIntField(L *LState, tb *LTable, key string, v int) int {
 			}
 		}
 		if num, err := parseNumber(slv); err == nil {
-			return int(num)
+			return int(num.Int64())
 		}
 	default:
 		return v
@@ -68,12 +68,12 @@ var osFuncs = map[string]LGFunction{
 }
 
 func osClock(L *LState) int {
-	L.Push(LNumber(float64(time.Now().Sub(startedAt)) / float64(time.Second)))
+	L.Push(LNumberFloat(float64(time.Now().Sub(startedAt)) / float64(time.Second)))
 	return 1
 }
 
 func osDiffTime(L *LState) int {
-	L.Push(LNumber(L.CheckInt64(1) - L.CheckInt64(2)))
+	L.Push(LNumberInt(L.CheckInt64(1) - L.CheckInt64(2)))
 	return 1
 }
 
@@ -84,16 +84,16 @@ func osExecute(L *LState) int {
 	args = append([]string{cmd}, args...)
 	process, err := os.StartProcess(cmd, args, &procAttr)
 	if err != nil {
-		L.Push(LNumber(1))
+		L.Push(LNumberInt(1))
 		return 1
 	}
 
 	ps, err := process.Wait()
 	if err != nil || !ps.Success() {
-		L.Push(LNumber(1))
+		L.Push(LNumberInt(1))
 		return 1
 	}
-	L.Push(LNumber(0))
+	L.Push(LNumberInt(0))
 	return 1
 }
 
@@ -121,15 +121,15 @@ func osDate(L *LState) int {
 		}
 		if strings.HasPrefix(cfmt, "*t") {
 			ret := L.NewTable()
-			ret.RawSetString("year", LNumber(t.Year()))
-			ret.RawSetString("month", LNumber(t.Month()))
-			ret.RawSetString("day", LNumber(t.Day()))
-			ret.RawSetString("hour", LNumber(t.Hour()))
-			ret.RawSetString("min", LNumber(t.Minute()))
-			ret.RawSetString("sec", LNumber(t.Second()))
-			ret.RawSetString("wday", LNumber(t.Weekday()+1))
+			ret.RawSetString("year", LNumberInt(int64(t.Year())))
+			ret.RawSetString("month", LNumberInt(int64(t.Month())))
+			ret.RawSetString("day", LNumberInt(int64(t.Day())))
+			ret.RawSetString("hour", LNumberInt(int64(t.Hour())))
+			ret.RawSetString("min", LNumberInt(int64(t.Minute())))
+			ret.RawSetString("sec", LNumberInt(int64(t.Second())))
+			ret.RawSetString("wday", LNumberInt(int64(t.Weekday()+1)))
 			// TODO yday & dst
-			ret.RawSetString("yday", LNumber(0))
+			ret.RawSetString("yday", LNumberInt(0))
 			ret.RawSetString("isdst", LFalse)
 			L.Push(ret)
 			return 1
@@ -193,11 +193,11 @@ func osSetEnv(L *LState) int {
 
 func osTime(L *LState) int {
 	if L.GetTop() == 0 {
-		L.Push(LNumber(time.Now().Unix()))
+		L.Push(LNumberInt(time.Now().Unix()))
 	} else {
 		lv := L.CheckAny(1)
 		if lv == LNil {
-			L.Push(LNumber(time.Now().Unix()))
+			L.Push(LNumberInt(time.Now().Unix()))
 		} else {
 			tbl, ok := lv.(*LTable)
 			if !ok {
@@ -215,7 +215,7 @@ func osTime(L *LState) int {
 			if false {
 				print(isdst)
 			}
-			L.Push(LNumber(t.Unix()))
+			L.Push(LNumberInt(t.Unix()))
 		}
 	}
 	return 1

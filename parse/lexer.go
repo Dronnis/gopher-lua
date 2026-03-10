@@ -369,12 +369,17 @@ redo:
 				tok.Str = "~="
 				sc.Next()
 			} else {
-				err = sc.Error("~", "Invalid '~' token")
+				tok.Type = Ttilde
+				tok.Str = "~"
 			}
 		case '<':
 			if sc.Peek() == '=' {
 				tok.Type = TLte
 				tok.Str = "<="
+				sc.Next()
+			} else if sc.Peek() == '<' {
+				tok.Type = T2LessThan
+				tok.Str = "<<"
 				sc.Next()
 			} else {
 				tok.Type = ch
@@ -384,6 +389,10 @@ redo:
 			if sc.Peek() == '=' {
 				tok.Type = TGte
 				tok.Str = ">="
+				sc.Next()
+			} else if sc.Peek() == '>' {
+				tok.Type = T2GreaterThan
+				tok.Str = ">>"
 				sc.Next()
 			} else {
 				tok.Type = ch
@@ -418,7 +427,28 @@ redo:
 				tok.Type = ch
 				tok.Str = string(rune(ch))
 			}
-		case '+', '*', '/', '%', '^', '#', '(', ')', '{', '}', ']', ';', ',':
+		case '/':
+			if sc.Peek() == '/' {
+				tok.Type = T2Slash
+				tok.Str = "//"
+				sc.Next()
+			} else {
+				tok.Type = ch
+				tok.Str = string(rune(ch))
+			}
+		case '|':
+			tok.Type = Tpipe
+			tok.Str = "|"
+		case '&':
+			if sc.Peek() == '&' {
+				tok.Type = TAnd
+				tok.Str = "&&"
+				sc.Next()
+			} else {
+				tok.Type = Tampersand
+				tok.Str = "&"
+			}
+		case '+', '*', '%', '^', '#', '(', ')', '{', '}', ']', ';', ',':
 			tok.Type = ch
 			tok.Str = string(rune(ch))
 		default:

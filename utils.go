@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"strconv"
 	"strings"
@@ -131,28 +132,35 @@ func strftime(t time.Time, cfmt string) string {
 }
 
 func isInteger(v LNumber) bool {
-	return float64(v) == float64(int64(v))
-	//_, frac := math.Modf(float64(v))
-	//return frac == 0.0
+	return v.IsInteger()
 }
 
 func isArrayKey(v LNumber) bool {
-	return isInteger(v) && v < LNumber(int((^uint(0))>>1)) && v > LNumber(0) && v < LNumber(MaxArrayIndex)
+	if !v.IsInteger() {
+		return false
+	}
+	iv := v.Int64()
+	return iv > 0 && iv < int64(MaxArrayIndex)
 }
 
 func parseNumber(number string) (LNumber, error) {
-	var value LNumber
 	number = strings.Trim(number, " \t\n")
-	if v, err := strconv.ParseInt(number, 0, LNumberBit); err != nil {
-		if v2, err2 := strconv.ParseFloat(number, LNumberBit); err2 != nil {
-			return LNumber(0), err2
-		} else {
-			value = LNumber(v2)
-		}
-	} else {
-		value = LNumber(v)
+	
+	// Try to parse as integer first
+	if v, err := strconv.ParseInt(number, 0, 64); err == nil {
+		return LNumberInt(v), nil
 	}
-	return value, nil
+	
+	// Try to parse as float
+	if v, err := strconv.ParseFloat(number, 64); err == nil {
+		// Check if it's actually an integer value
+		if v == float64(int64(v)) && !math.IsInf(v, 0) && !math.IsNaN(v) {
+			return LNumberInt(int64(v)), nil
+		}
+		return LNumberFloat(v), nil
+	}
+	
+	return LNumberInt(0), fmt.Errorf("invalid number format: %s", number)
 }
 
 func popenArgs(arg string) (string, []string) {

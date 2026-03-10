@@ -58,13 +58,20 @@ import (
 %token<token> TEqeq TNeq TLte TGte T2Comma T3Comma T2Colon TIdent TNumber TString '{' '('
 
 /* Operators */
+%token<token> Ttilde T2LessThan T2GreaterThan Tpipe Tampersand
 %left TOr
 %left TAnd
+%left Tpipe /* bitwise or */
+%left Ttilde /* bitwise xor */
+%left Tampersand /* bitwise and */
+%left T2LessThan T2GreaterThan /* shifts */
 %left '>' '<' TGte TLte TEqeq TNeq
 %right T2Comma
 %left '+' '-'
-%left '*' '/' '%'
-%right UNARY /* not # -(unary) */
+%left '*' '%'
+%left '/'
+%left T2Slash
+%right UNARY /* not # -(unary) ~ (bitwise not) */
 %right '^'
 
 %%
@@ -366,6 +373,10 @@ expr:
             $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "/", Rhs: $3}
             $$.SetLine($1.Line())
         } |
+        expr T2Slash expr {
+            $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "//", Rhs: $3}
+            $$.SetLine($1.Line())
+        } |
         expr '%' expr {
             $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "%", Rhs: $3}
             $$.SetLine($1.Line())
@@ -374,12 +385,36 @@ expr:
             $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "^", Rhs: $3}
             $$.SetLine($1.Line())
         } |
+        expr T2LessThan expr {
+            $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "<<", Rhs: $3}
+            $$.SetLine($1.Line())
+        } |
+        expr T2GreaterThan expr {
+            $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: ">>", Rhs: $3}
+            $$.SetLine($1.Line())
+        } |
+        expr Tampersand expr {
+            $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "&", Rhs: $3}
+            $$.SetLine($1.Line())
+        } |
+        expr Ttilde expr {
+            $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "~", Rhs: $3}
+            $$.SetLine($1.Line())
+        } |
+        expr Tpipe expr {
+            $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "|", Rhs: $3}
+            $$.SetLine($1.Line())
+        } |
         '-' expr %prec UNARY {
             $$ = &ast.UnaryMinusOpExpr{Expr: $2}
             $$.SetLine($2.Line())
         } |
         TNot expr %prec UNARY {
             $$ = &ast.UnaryNotOpExpr{Expr: $2}
+            $$.SetLine($2.Line())
+        } |
+        Ttilde expr %prec UNARY {
+            $$ = &ast.UnaryBitNotOpExpr{Expr: $2}
             $$.SetLine($2.Line())
         } |
         '#' expr %prec UNARY {

@@ -69,7 +69,7 @@ func LVAsNumber(v LValue) LNumber {
 			return num
 		}
 	}
-	return LNumber(0)
+	return LNumberInt(0)
 }
 
 type LNilType struct{}
@@ -108,35 +108,6 @@ func (st LString) Format(f fmt.State, c rune) {
 		}
 	default:
 		defaultFormat(string(st), f, c)
-	}
-}
-
-func (nm LNumber) String() string {
-	if isInteger(nm) {
-		return fmt.Sprint(int64(nm))
-	}
-	return fmt.Sprint(float64(nm))
-}
-
-func (nm LNumber) Type() LValueType { return LTNumber }
-
-// fmt.Formatter interface
-func (nm LNumber) Format(f fmt.State, c rune) {
-	switch c {
-	case 'q', 's':
-		defaultFormat(nm.String(), f, c)
-	case 'b', 'c', 'd', 'o', 'x', 'X', 'U':
-		defaultFormat(int64(nm), f, c)
-	case 'e', 'E', 'f', 'F', 'g', 'G':
-		defaultFormat(float64(nm), f, c)
-	case 'i':
-		defaultFormat(int64(nm), f, 'd')
-	default:
-		if isInteger(nm) {
-			defaultFormat(int64(nm), f, c)
-		} else {
-			defaultFormat(float64(nm), f, c)
-		}
 	}
 }
 

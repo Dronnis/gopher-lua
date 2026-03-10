@@ -42,7 +42,7 @@ func debugGetInfo(L *LState) int {
 		dbg = &Debug{}
 		fn, err = L.GetInfo(">"+what, dbg, lv)
 	case LNumber:
-		dbg, ok = L.GetStack(int(lv))
+		dbg, ok = L.GetStack(int(lv.Int64()))
 		if !ok {
 			L.Push(LNil)
 			return 1
@@ -62,10 +62,10 @@ func debugGetInfo(L *LState) int {
 	}
 	tbl.RawSetString("what", LString(dbg.What))
 	tbl.RawSetString("source", LString(dbg.Source))
-	tbl.RawSetString("currentline", LNumber(dbg.CurrentLine))
-	tbl.RawSetString("nups", LNumber(dbg.NUpvalues))
-	tbl.RawSetString("linedefined", LNumber(dbg.LineDefined))
-	tbl.RawSetString("lastlinedefined", LNumber(dbg.LastLineDefined))
+	tbl.RawSetString("currentline", LNumberInt(int64(dbg.CurrentLine)))
+	tbl.RawSetString("nups", LNumberInt(int64(dbg.NUpvalues)))
+	tbl.RawSetString("linedefined", LNumberInt(int64(dbg.LineDefined)))
+	tbl.RawSetString("lastlinedefined", LNumberInt(int64(dbg.LastLineDefined)))
 	tbl.RawSetString("func", fn)
 	L.Push(tbl)
 	return 1

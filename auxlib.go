@@ -20,7 +20,7 @@ func (ls *LState) CheckAny(n int) LValue {
 func (ls *LState) CheckInt(n int) int {
 	v := ls.Get(n)
 	if intv, ok := v.(LNumber); ok {
-		return int(intv)
+		return int(intv.Int64())
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -29,7 +29,7 @@ func (ls *LState) CheckInt(n int) int {
 func (ls *LState) CheckInt64(n int) int64 {
 	v := ls.Get(n)
 	if intv, ok := v.(LNumber); ok {
-		return int64(intv)
+		return intv.Int64()
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -46,7 +46,7 @@ func (ls *LState) CheckNumber(n int) LNumber {
 		}
 	}
 	ls.TypeError(n, LTNumber)
-	return 0
+	return LNumberInt(0)
 }
 
 func (ls *LState) CheckString(n int) string {
@@ -147,7 +147,7 @@ func (ls *LState) OptInt(n int, d int) int {
 		return d
 	}
 	if intv, ok := v.(LNumber); ok {
-		return int(intv)
+		return int(intv.Int64())
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -159,7 +159,7 @@ func (ls *LState) OptInt64(n int, d int64) int64 {
 		return d
 	}
 	if intv, ok := v.(LNumber); ok {
-		return int64(intv)
+		return intv.Int64()
 	}
 	ls.TypeError(n, LTNumber)
 	return 0
@@ -174,7 +174,7 @@ func (ls *LState) OptNumber(n int, d LNumber) LNumber {
 		return lv
 	}
 	ls.TypeError(n, LTNumber)
-	return 0
+	return LNumberInt(0)
 }
 
 func (ls *LState) OptString(n int, d string) string {

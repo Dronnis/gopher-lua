@@ -41,6 +41,13 @@ var luaTests []string = []string{
 	"vararg.lua",
 	"pm.lua",
 	"files.lua",
+	//"bitwise.lua",
+	//"bwcoercion.lua",
+	//"coroutine.lua",
+	//"goto.lua",
+	//"heavy.lua",
+	//"tpack.lua",
+	//"utf8.lua",
 }
 
 func testScriptCompile(t *testing.T, script string) {
@@ -107,7 +114,7 @@ func sleep(L *LState) int {
 }
 
 func countFinalizers(L *LState) int {
-	L.Push(LNumber(numActiveUserDatas))
+	L.Push(LNumberInt(int64(numActiveUserDatas)))
 	return 1
 }
 
@@ -145,7 +152,7 @@ func TestGlua(t *testing.T) {
 }
 
 func TestLua(t *testing.T) {
-	testScriptDir(t, luaTests, "_lua5.1-tests")
+	testScriptDir(t, luaTests, "_lua5.3-tests")
 }
 
 func TestMergingLoadNilBug(t *testing.T) {

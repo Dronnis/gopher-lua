@@ -11,16 +11,15 @@ type iface struct {
 	word unsafe.Pointer
 }
 
-const preloadLimit LNumber = 128
+const preloadLimit = 128
 
-var _fv float64
-var _uv uintptr
-
-var preloads [int(preloadLimit)]LValue
+var preloadsInt [int(preloadLimit)]LValue
+var preloadsFloat [int(preloadLimit)]LValue
 
 func init() {
 	for i := 0; i < int(preloadLimit); i++ {
-		preloads[i] = LNumber(i)
+		preloadsInt[i] = LNumber{value: luaIntegerType(i)}
+		preloadsFloat[i] = LNumber{value: luaFloatType(float64(i))}
 	}
 }
 
@@ -28,52 +27,59 @@ func init() {
 type allocator struct {
 	size    int
 	fptrs   []float64
+	iptrs   []int64
 	fheader *reflect.SliceHeader
-
-	scratchValue  LValue
-	scratchValueP *iface
+	iheader *reflect.SliceHeader
 }
 
 func newAllocator(size int) *allocator {
 	al := &allocator{
 		size:    size,
 		fptrs:   make([]float64, 0, size),
+		iptrs:   make([]int64, 0, size),
 		fheader: nil,
+		iheader: nil,
 	}
 	al.fheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.fptrs))
-	al.scratchValue = LNumber(0)
-	al.scratchValueP = (*iface)(unsafe.Pointer(&al.scratchValue))
-
+	al.iheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.iptrs))
 	return al
 }
 
 // LNumber2I takes a number value and returns an interface LValue representing the same number.
-// Converting an LNumber to a LValue naively, by doing:
-// `var val LValue = myLNumber`
-// will result in an individual heap alloc of 8 bytes for the float value. LNumber2I amortizes the cost and memory
-// overhead of these allocs by allocating blocks of floats instead.
-// The downside of this is that all of the floats on a given block have to become eligible for gc before the block
-// as a whole can be gc-ed.
 func (al *allocator) LNumber2I(v LNumber) LValue {
 	// first check for shared preloaded numbers
-	if v >= 0 && v < preloadLimit && float64(v) == float64(int64(v)) {
-		return preloads[int(v)]
+	if v.IsInteger() {
+		iv := v.Int64()
+		if iv >= 0 && iv < int64(preloadLimit) {
+			return preloadsInt[int(iv)]
+		}
+	} else {
+		fv := v.Float64()
+		if fv >= 0 && fv < float64(preloadLimit) && fv == float64(int64(fv)) {
+			return preloadsFloat[int(fv)]
+		}
 	}
 
 	// check if we need a new alloc page
-	if cap(al.fptrs) == len(al.fptrs) {
-		al.fptrs = make([]float64, 0, al.size)
-		al.fheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.fptrs))
+	if v.IsInteger() {
+		if cap(al.iptrs) == len(al.iptrs) {
+			al.iptrs = make([]int64, 0, al.size)
+			al.iheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.iptrs))
+		}
+
+		// alloc a new int, and store our value into it
+		al.iptrs = append(al.iptrs, v.Int64())
+		iptr := &al.iptrs[len(al.iptrs)-1]
+		return LNumber{value: luaIntegerType(*iptr)}
+	} else {
+		if cap(al.fptrs) == len(al.fptrs) {
+			al.fptrs = make([]float64, 0, al.size)
+			al.fheader = (*reflect.SliceHeader)(unsafe.Pointer(&al.fptrs))
+		}
+
+		// alloc a new float, and store our value into it
+		al.fptrs = append(al.fptrs, v.Float64())
+		fptr := &al.fptrs[len(al.fptrs)-1]
+		return LNumber{value: luaFloatType(*fptr)}
 	}
-
-	// alloc a new float, and store our value into it
-	al.fptrs = append(al.fptrs, float64(v))
-	fptr := &al.fptrs[len(al.fptrs)-1]
-
-	// hack our scratch LValue to point to our allocated value
-	// this scratch lvalue is copied when this function returns meaning the scratch value can be reused
-	// on the next call
-	al.scratchValueP.word = unsafe.Pointer(fptr)
-
-	return al.scratchValue
 }

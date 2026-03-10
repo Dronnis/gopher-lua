@@ -974,6 +974,9 @@ func (ls *LState) findUpvalue(idx int) *Upvalue {
 
 func (ls *LState) metatable(lvalue LValue, rawget bool) LValue {
 	var metatable LValue = LNil
+	if lvalue == LNil {
+		return LNil
+	}
 	switch obj := lvalue.(type) {
 	case *LTable:
 		metatable = obj.Metatable
@@ -1115,7 +1118,7 @@ func (ls *LState) initCallFrame(cf *callFrame) { // +inline-start
 					for i := 0; i < nvarargs; i++ {
 						argtb.RawSetInt(i+1, ls.reg.Get(cf.LocalBase+np+i))
 					}
-					argtb.RawSetString("n", LNumber(nvarargs))
+					argtb.RawSetString("n", LNumberInt(int64(nvarargs)))
 					//ls.reg.Set(cf.LocalBase+nargs+np, argtb)
 					ls.reg.array[cf.LocalBase+nargs+np] = argtb
 				} else {
@@ -1227,7 +1230,7 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 						for i := 0; i < nvarargs; i++ {
 							argtb.RawSetInt(i+1, ls.reg.Get(cf.LocalBase+np+i))
 						}
-						argtb.RawSetString("n", LNumber(nvarargs))
+						argtb.RawSetString("n", LNumberInt(int64(nvarargs)))
 						//ls.reg.Set(cf.LocalBase+nargs+np, argtb)
 						ls.reg.array[cf.LocalBase+nargs+np] = argtb
 					} else {
@@ -1659,11 +1662,11 @@ func (ls *LState) ToBool(n int) bool {
 
 func (ls *LState) ToInt(n int) int {
 	if lv, ok := ls.Get(n).(LNumber); ok {
-		return int(lv)
+		return int(lv.Int64())
 	}
 	if lv, ok := ls.Get(n).(LString); ok {
 		if num, err := parseNumber(string(lv)); err == nil {
-			return int(num)
+			return int(num.Int64())
 		}
 	}
 	return 0
@@ -1671,11 +1674,11 @@ func (ls *LState) ToInt(n int) int {
 
 func (ls *LState) ToInt64(n int) int64 {
 	if lv, ok := ls.Get(n).(LNumber); ok {
-		return int64(lv)
+		return lv.Int64()
 	}
 	if lv, ok := ls.Get(n).(LString); ok {
 		if num, err := parseNumber(string(lv)); err == nil {
-			return int64(num)
+			return num.Int64()
 		}
 	}
 	return 0
@@ -1913,7 +1916,7 @@ func (ls *LState) GetTable(obj LValue, key LValue) LValue {
 }
 
 func (ls *LState) RawSet(tb *LTable, key LValue, value LValue) {
-	if n, ok := key.(LNumber); ok && math.IsNaN(float64(n)) {
+	if n, ok := key.(LNumber); ok && math.IsNaN(n.Float64()) {
 		ls.RaiseError("table index is NaN")
 	} else if key == LNil {
 		ls.RaiseError("table index is nil")
@@ -1964,7 +1967,7 @@ func (ls *LState) ObjLen(v1 LValue) int {
 		ls.Call(1, 1)
 		ret := ls.reg.Pop()
 		if ret.Type() == LTNumber {
-			return int(ret.(LNumber))
+			return int(ret.(LNumber).Int64())
 		}
 	} else if v1.Type() == LTTable {
 		return v1.(*LTable).Len()

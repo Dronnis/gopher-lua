@@ -128,13 +128,13 @@ func lnumberValue(expr ast.Expr) (LNumber, bool) {
 	if ex, ok := expr.(*ast.NumberExpr); ok {
 		lv, err := parseNumber(ex.Value)
 		if err != nil {
-			lv = LNumber(math.NaN())
+			lv = LNumberFloat(math.NaN())
 		}
 		return lv, true
 	} else if ex, ok := expr.(*constLValueExpr); ok {
 		return ex.Value.(LNumber), true
 	}
-	return 0, false
+	return LNumberInt(0), false
 }
 
 /* utilities }}} */
@@ -1153,7 +1153,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 	case *ast.NumberExpr:
 		num, err := parseNumber(ex.Value)
 		if err != nil {
-			num = LNumber(math.NaN())
+			num = LNumberFloat(math.NaN())
 		}
 		code.AddABx(OP_LOADK, sreg, context.ConstIndex(num), sline(ex))
 		return sused
@@ -1211,7 +1211,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 	case *ast.StringConcatOpExpr:
 		compileStringConcatOpExpr(context, reg, ex, ec)
 		return sused
-	case *ast.UnaryMinusOpExpr, *ast.UnaryNotOpExpr, *ast.UnaryLenOpExpr:
+	case *ast.UnaryMinusOpExpr, *ast.UnaryNotOpExpr, *ast.UnaryLenOpExpr, *ast.UnaryBitNotOpExpr:
 		compileUnaryOpExpr(context, reg, ex, ec)
 		return sused
 	case *ast.RelationalOpExpr:
@@ -1274,17 +1274,29 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 		if lisconst && risconst {
 			switch expr.Operator {
 			case "+":
-				return &constLValueExpr{Value: lvalue + rvalue}
+				return &constLValueExpr{Value: lvalue.Add(rvalue)}
 			case "-":
-				return &constLValueExpr{Value: lvalue - rvalue}
+				return &constLValueExpr{Value: lvalue.Sub(rvalue)}
 			case "*":
-				return &constLValueExpr{Value: lvalue * rvalue}
+				return &constLValueExpr{Value: lvalue.Mul(rvalue)}
 			case "/":
-				return &constLValueExpr{Value: lvalue / rvalue}
+				return &constLValueExpr{Value: lvalue.Div(rvalue)}
+			case "//":
+				return &constLValueExpr{Value: lvalue.IDiv(rvalue)}
 			case "%":
-				return &constLValueExpr{Value: luaModulo(lvalue, rvalue)}
+				return &constLValueExpr{Value: lvalue.Mod(rvalue)}
 			case "^":
-				return &constLValueExpr{Value: LNumber(math.Pow(float64(lvalue), float64(rvalue)))}
+				return &constLValueExpr{Value: lvalue.Pow(rvalue)}
+			case "<<":
+				return &constLValueExpr{Value: lvalue.Shl(rvalue)}
+			case ">>":
+				return &constLValueExpr{Value: lvalue.Shr(rvalue)}
+			case "&":
+				return &constLValueExpr{Value: lvalue.Band(rvalue)}
+			case "~":
+				return &constLValueExpr{Value: lvalue.Bxor(rvalue)}
+			case "|":
+				return &constLValueExpr{Value: lvalue.Bor(rvalue)}
 			default:
 				panic(fmt.Sprintf("unknown binop: %v", expr.Operator))
 			}
@@ -1294,7 +1306,13 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 	case *ast.UnaryMinusOpExpr:
 		expr.Expr = constFold(expr.Expr)
 		if value, ok := lnumberValue(expr.Expr); ok {
-			return &constLValueExpr{Value: LNumber(-value)}
+			return &constLValueExpr{Value: value.Unm()}
+		}
+		return expr
+	case *ast.UnaryBitNotOpExpr:
+		expr.Expr = constFold(expr.Expr)
+		if value, ok := lnumberValue(expr.Expr); ok {
+			return &constLValueExpr{Value: value.Bnot()}
 		}
 		return expr
 	default:
@@ -1441,10 +1459,22 @@ func compileArithmeticOpExpr(context *funcContext, reg int, expr *ast.Arithmetic
 		op = OP_MUL
 	case "/":
 		op = OP_DIV
+	case "//":
+		op = OP_IDIV
 	case "%":
 		op = OP_MOD
 	case "^":
 		op = OP_POW
+	case "<<":
+		op = OP_SHL
+	case ">>":
+		op = OP_SHR
+	case "&":
+		op = OP_BAND
+	case "~":
+		op = OP_BXOR
+	case "|":
+		op = OP_BOR
 	}
 	context.Code.AddABC(op, a, b, c, sline(expr))
 } // }}}
@@ -1500,6 +1530,16 @@ func compileUnaryOpExpr(context *funcContext, reg int, expr ast.Expr, ec *expcon
 	case *ast.UnaryLenOpExpr:
 		opcode = OP_LEN
 		operandexpr = ex.Expr
+	case *ast.UnaryBitNotOpExpr:
+		exp := constFold(ex)
+		if lvexpr, ok := exp.(*constLValueExpr); ok {
+			exp.SetLine(sline(expr))
+			compileExpr(context, reg, lvexpr, ec)
+			return
+		}
+		ex, _ = exp.(*ast.UnaryBitNotOpExpr)
+		operandexpr = ex.Expr
+		opcode = OP_BNOT
 	}
 
 	a := savereg(ec, reg)
