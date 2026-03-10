@@ -156,12 +156,16 @@ func baseIpairs(L *LState) int {
 	return 3
 }
 
-func loadaux(L *LState, reader io.Reader, chunkname string) int {
+func loadaux(L *LState, reader io.Reader, chunkname string, env *LTable) int {
 	if fn, err := L.Load(reader, chunkname); err != nil {
 		L.Push(LNil)
 		L.Push(LString(err.Error()))
 		return 2
 	} else {
+		// Set the environment for the loaded function
+		if env != nil {
+			fn.Env = env
+		}
 		L.Push(fn)
 		return 1
 	}
@@ -172,7 +176,7 @@ func baseLoad(L *LState) int {
 	// chunk can be a string or a function
 	chunk := L.Get(1)
 	var reader io.Reader
-	
+
 	switch c := chunk.(type) {
 	case LString:
 		// If chunk is a string, use it directly
@@ -202,22 +206,36 @@ func baseLoad(L *LState) int {
 				return 2
 			}
 		}
-		return loadaux(L, strings.NewReader(strings.Join(buf, "")), chunkname)
+		// Get environment (4th argument)
+		var env *LTable
+		if L.GetTop() >= 4 {
+			if lv, ok := L.Get(4).(*LTable); ok {
+				env = lv
+			}
+		}
+		return loadaux(L, strings.NewReader(strings.Join(buf, "")), chunkname, env)
 	default:
 		L.Push(LNil)
 		L.Push(LString("bad argument #1 to load (function or string expected, got " + chunk.Type().String() + ")"))
 		return 2
 	}
-	
+
 	chunkname := L.OptString(2, "<load>")
-	// mode and env are ignored for compatibility
-	return loadaux(L, reader, chunkname)
+	// mode is ignored, env (4th argument) is used
+	var env *LTable
+	if L.GetTop() >= 4 {
+		if lv, ok := L.Get(4).(*LTable); ok {
+			env = lv
+		}
+	}
+	return loadaux(L, reader, chunkname, env)
 }
 
 func baseLoadFile(L *LState) int {
 	var reader io.Reader
 	var chunkname string
 	var err error
+	// Lua 5.3: loadfile([filename [, mode [, env]]])
 	if L.GetTop() < 1 {
 		reader = os.Stdin
 		chunkname = "<stdin>"
@@ -231,11 +249,27 @@ func baseLoadFile(L *LState) int {
 		}
 		defer reader.(*os.File).Close()
 	}
-	return loadaux(L, reader, chunkname)
+	// Get environment (4th argument)
+	var env *LTable
+	if L.GetTop() >= 4 {
+		if lv, ok := L.Get(4).(*LTable); ok {
+			env = lv
+		}
+	}
+	return loadaux(L, reader, chunkname, env)
 }
 
 func baseLoadString(L *LState) int {
-	return loadaux(L, strings.NewReader(L.CheckString(1)), L.OptString(2, "<string>"))
+	// Lua 5.3: loadstring(string [, chunkname [, env]])
+	chunkname := L.OptString(2, "<string>")
+	// Get environment (3rd argument)
+	var env *LTable
+	if L.GetTop() >= 3 {
+		if lv, ok := L.Get(3).(*LTable); ok {
+			env = lv
+		}
+	}
+	return loadaux(L, strings.NewReader(L.CheckString(1)), chunkname, env)
 }
 
 func baseNext(L *LState) int {
