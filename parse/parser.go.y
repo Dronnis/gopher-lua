@@ -18,6 +18,7 @@ import (
 %type<namelist> namelist
 %type<exprlist> exprlist
 %type<expr> expr
+%type<expr> simpleexpr
 %type<expr> string
 %type<expr> prefixexp
 %type<expr> functioncall
@@ -68,11 +69,9 @@ import (
 %left '>' '<' TGte TLte TEqeq TNeq
 %right T2Comma
 %left '+' '-'
-%left '*' '%'
-%left '/'
-%left T2Slash
-%right UNARY /* not # -(unary) ~ (bitwise not) */
+%left '*' '%' T2Slash '/'
 %right '^'
+%right UNARY /* not # -(unary) ~ (bitwise not) */
 
 %%
 
@@ -288,30 +287,30 @@ exprlist:
             $$ = append($1, $3)
         }
 
-expr:
+simpleexpr:
         TNil {
             $$ = &ast.NilExpr{}
             $$.SetLine($1.Pos.Line)
-        } | 
+        } |
         TFalse {
             $$ = &ast.FalseExpr{}
             $$.SetLine($1.Pos.Line)
-        } | 
+        } |
         TTrue {
             $$ = &ast.TrueExpr{}
             $$.SetLine($1.Pos.Line)
-        } | 
+        } |
         TNumber {
             $$ = &ast.NumberExpr{Value: $1.Str}
             $$.SetLine($1.Pos.Line)
-        } | 
+        } |
         T3Comma {
             $$ = &ast.Comma3Expr{}
             $$.SetLine($1.Pos.Line)
         } |
         function {
             $$ = $1
-        } | 
+        } |
         prefixexp {
             $$ = $1
         } |
@@ -319,6 +318,11 @@ expr:
             $$ = $1
         } |
         tableconstructor {
+            $$ = $1
+        }
+
+expr:
+        simpleexpr {
             $$ = $1
         } |
         expr TOr expr {
@@ -381,7 +385,7 @@ expr:
             $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "%", Rhs: $3}
             $$.SetLine($1.Line())
         } |
-        expr '^' expr {
+        simpleexpr '^' expr {
             $$ = &ast.ArithmeticOpExpr{Lhs: $1, Operator: "^", Rhs: $3}
             $$.SetLine($1.Line())
         } |

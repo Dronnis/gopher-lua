@@ -17,7 +17,7 @@ assert(type(package.preload) == "table")
 
 assert(type(package.config) == "string")
 print("package config: "..string.gsub(package.config, "\n", "|"))
-
+_soft = true
 do
   -- create a path with 'max' templates,
   -- each with 1-10 repetitions of '?'

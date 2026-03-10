@@ -155,6 +155,24 @@ func TestLua(t *testing.T) {
 	testScriptDir(t, luaTests, "_lua5.3-tests")
 }
 
+func TestUnaryMinusAfterPower(t *testing.T) {
+	// Test expression: 2.0^-2 == 1/4 and -2^- -2 == - - -4
+	s := `
+		local a = 2.0^-2
+		local b = 1/4
+		assert(a == b, "2.0^-2 should equal 1/4")
+		
+		local c = -2^- -2
+		local d = - - -4
+		assert(c == d, "-2^- -2 should equal - - -4")
+	`
+	L := NewState()
+	defer L.Close()
+	if err := L.DoString(s); err != nil {
+		t.Error(err)
+	}
+}
+
 func TestMergingLoadNilBug(t *testing.T) {
 	// there was a bug where a multiple load nils were being incorrectly merged, and the following code exposed it
 	s := `
