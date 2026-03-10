@@ -10,7 +10,7 @@ import (
 
 /* internal constants & structs  {{{ */
 
-const maxRegisters = 250
+const maxRegisters = 300
 
 type expContextType int
 
@@ -446,7 +446,7 @@ func (fc *funcContext) getEnvUpvalue() int {
 	if idx != -1 {
 		return idx
 	}
-	
+
 	// For nested functions, _ENV should be captured from parent
 	current := fc.Parent
 	for current != nil {
@@ -458,10 +458,19 @@ func (fc *funcContext) getEnvUpvalue() int {
 		}
 		current = current.Parent
 	}
-	
+
 	// _ENV not found in any parent - this is the main chunk
 	// Register _ENV as the first upvalue
 	return fc.Upvalues.RegisterUnique("_ENV")
+}
+
+// getEnvReg returns the _ENV register for global variable access
+// This uses a temporary register that is freed after use
+func (fc *funcContext) getEnvReg(code *codeStore, sline int, tempReg int) int {
+	// Use the provided temporary register for _ENV
+	envupvalue := fc.getEnvUpvalue()
+	code.AddABC(OP_GETUPVAL, tempReg, envupvalue, 0, sline)
+	return tempReg
 }
 
 func (fc *funcContext) AddUnresolvedGoto(label *gotoLabelDesc) {
@@ -827,15 +836,12 @@ func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 			reg -= 1
 		case ecEnv:
 			// Lua 5.3: set global via _ENV[key] = value
-			// Optimized: use SETTABLEKS which encodes the key in the instruction
-			// Only 2 registers needed: reg (value) and reg+1 (_ENV temporary)
-			envreg := context.getEnvUpvalue()
-			envreg_slot := reg + 1
-			// Get _ENV into envreg_slot
-			code.AddABC(OP_GETUPVAL, envreg_slot, envreg, 0, sline(ex))
+			// Use reg+1 as temporary for _ENV
+			tempReg := reg + 1
+			envreg := context.getEnvReg(code, sline(ex), tempReg)
 			// SETTABLEKS _ENV[key] = value (key is RK-encoded constant string)
 			keyindex := context.ConstIndex(LString(ex.(*ast.IdentExpr).Value))
-			code.AddABC(OP_SETTABLEKS, envreg_slot, opRkAsk(keyindex), reg, sline(ex))
+			code.AddABC(OP_SETTABLEKS, envreg, opRkAsk(keyindex), reg, sline(ex))
 			reg -= 1
 		case ecTable:
 			opcode := OP_SETTABLE
@@ -1225,15 +1231,12 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 				code.AddABC(OP_MOVE, sreg, b, 0, sline(ex))
 			case ecEnv:
 				// Lua 5.3: access global via _ENV[key]
-				// Optimized: use GETTABLEKS which encodes the key in the instruction
-				// Only 2 registers needed: sreg (result) and sreg+1 (_ENV temporary)
-				envreg := context.getEnvUpvalue()
-				envreg_slot := sreg + 1
-				// Get _ENV into envreg_slot
-				code.AddABC(OP_GETUPVAL, envreg_slot, envreg, 0, sline(ex))
+				// Use sreg+1 as temporary for _ENV
+				tempReg := sreg + 1
+				envreg := context.getEnvReg(code, sline(ex), tempReg)
 				// GETTABLEKS sreg = _ENV[key] (key is RK-encoded constant string)
 				keyindex := context.ConstIndex(LString(ex.Value))
-				code.AddABC(OP_GETTABLEKS, sreg, envreg_slot, opRkAsk(keyindex), sline(ex))
+				code.AddABC(OP_GETTABLEKS, sreg, envreg, opRkAsk(keyindex), sline(ex))
 				return 1  // Result is in sreg
 			}
 		}
