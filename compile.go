@@ -827,17 +827,15 @@ func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 			reg -= 1
 		case ecEnv:
 			// Lua 5.3: set global via _ENV[key] = value
-			// Value is already in 'reg' from RHS compilation
-			// Use reg+1 and reg+2 for temporaries to avoid overwriting the value
+			// Optimized: use SETTABLEKS which encodes the key in the instruction
+			// Only 2 registers needed: reg (value) and reg+1 (_ENV temporary)
 			envreg := context.getEnvUpvalue()
 			envreg_slot := reg + 1
-			keyreg := reg + 2
 			// Get _ENV into envreg_slot
 			code.AddABC(OP_GETUPVAL, envreg_slot, envreg, 0, sline(ex))
-			// Load the key
-			code.AddABx(OP_LOADK, keyreg, context.ConstIndex(LString(ex.(*ast.IdentExpr).Value)), sline(ex))
-			// SETTABLE _ENV[key] = value (reg)
-			code.AddABC(OP_SETTABLE, envreg_slot, keyreg, reg, sline(ex))
+			// SETTABLEKS _ENV[key] = value (key is RK-encoded constant string)
+			keyindex := context.ConstIndex(LString(ex.(*ast.IdentExpr).Value))
+			code.AddABC(OP_SETTABLEKS, envreg_slot, opRkAsk(keyindex), reg, sline(ex))
 			reg -= 1
 		case ecTable:
 			opcode := OP_SETTABLE
@@ -1227,16 +1225,15 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 				code.AddABC(OP_MOVE, sreg, b, 0, sline(ex))
 			case ecEnv:
 				// Lua 5.3: access global via _ENV[key]
-				// Result goes to sreg, use sreg+1 for temporaries
+				// Optimized: use GETTABLEKS which encodes the key in the instruction
+				// Only 2 registers needed: sreg (result) and sreg+1 (_ENV temporary)
 				envreg := context.getEnvUpvalue()
 				envreg_slot := sreg + 1
-				keyreg := sreg + 2
 				// Get _ENV into envreg_slot
 				code.AddABC(OP_GETUPVAL, envreg_slot, envreg, 0, sline(ex))
-				// Load the key
-				code.AddABx(OP_LOADK, keyreg, context.ConstIndex(LString(ex.Value)), sline(ex))
-				// GETTABLE sreg = envreg_slot[keyreg]
-				code.AddABC(OP_GETTABLE, sreg, envreg_slot, keyreg, sline(ex))
+				// GETTABLEKS sreg = _ENV[key] (key is RK-encoded constant string)
+				keyindex := context.ConstIndex(LString(ex.Value))
+				code.AddABC(OP_GETTABLEKS, sreg, envreg_slot, opRkAsk(keyindex), sline(ex))
 				return 1  // Result is in sreg
 			}
 		}
@@ -1861,6 +1858,11 @@ func getIdentRefType(context *funcContext, current *funcContext, expr *ast.Ident
 		if current == context {
 			return ecLocal
 		}
+		return ecUpvalue
+	}
+	// Check if _ENV is an upvalue (for direct _ENV access)
+	if expr.Value == "_ENV" {
+		// _ENV should be the first upvalue in Lua 5.3
 		return ecUpvalue
 	}
 	return getIdentRefType(context, current.Parent, expr)

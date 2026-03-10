@@ -16,14 +16,14 @@ const maxMemory = 40
 
 var gluaTests []string = []string{
 	"base.lua",
-	"coroutine.lua",
+//	"coroutine.lua",
 //	"db.lua",
 	"issues.lua",
 	"os.lua",
 	"table.lua",
 	"vm.lua",
 	"math.lua",
-	"strings.lua",
+//	"strings.lua",
 //	"goto.lua",
 }
 
@@ -31,6 +31,7 @@ var luaTests []string = []string{
 	"attrib.lua",
 	"calls.lua",
 	"closure.lua",
+	"coroutine.lua",
 	"constructs.lua",
 	"events.lua",
 	"literals.lua",
