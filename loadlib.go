@@ -105,7 +105,8 @@ func loLoaderLua(L *LState) int {
 		L.RaiseError(err1.Error())
 	}
 	L.Push(fn)
-	return 1
+	L.Push(LString(path))  // Return the file path as second value (Lua 5.3 compatibility)
+	return 2
 }
 
 func loLoadLib(L *LState) int {

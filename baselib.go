@@ -628,6 +628,7 @@ func loRequire(L *LState) int {
 	}
 	messages := []string{}
 	var modasfunc LValue
+	var modname LValue
 	for i := 1; ; i++ {
 		loader := L.RawGetInt(loaders, i)
 		if loader == LNil {
@@ -635,21 +636,36 @@ func loRequire(L *LState) int {
 		}
 		L.Push(loader)
 		L.Push(LString(name))
-		L.Call(1, 1)
-		ret := L.reg.Pop()
+		L.Call(1, MultRet)
+		// Get the return values from the loader
+		// First return value is the function (or error string)
+		ret := L.Get(-1)
+		// Second return value (if any) is extra data like file path (Lua 5.3)
+		var extra LValue
+		if L.GetTop() >= 2 {
+			extra = L.Get(-2)
+		}
 		switch retv := ret.(type) {
 		case *LFunction:
 			modasfunc = retv
+			modname = extra  // Use the extra value (file path) as the module name
 			goto loopbreak
 		case LString:
 			messages = append(messages, string(retv))
 		}
+		L.Pop(1)
 	}
 loopbreak:
 	L.SetField(loaded, name, loopdetection)
 	L.Push(modasfunc)
-	L.Push(LString(name))
-	L.Call(1, 1)
+	// Pass module name and extra data (file path) to the module function
+	if modname != nil {
+		L.Push(modname)
+		L.Call(1, MultRet)
+	} else {
+		L.Push(LString(name))
+		L.Call(1, MultRet)
+	}
 	ret := L.reg.Pop()
 	modv := L.GetField(loaded, name)
 	if ret != LNil && modv == loopdetection {

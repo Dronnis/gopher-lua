@@ -2572,6 +2572,33 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 		ret = bool(lhs.(LBool)) == bool(rhs.(LBool))
 	case LTString:
 		ret = string(lhs.(LString)) == string(rhs.(LString))
+	case LTFunction:
+		// Functions are equal if they have the same prototype and same upvalues
+		fn1, _ := lhs.(*LFunction)
+		fn2, _ := rhs.(*LFunction)
+		if fn1 == fn2 {
+			ret = true
+		} else if !fn1.IsG && !fn2.IsG {
+			// Compare Lua functions by prototype and upvalues
+			if fn1.Proto == fn2.Proto {
+				ret = true
+				if len(fn1.Upvalues) == len(fn2.Upvalues) {
+					for i := range fn1.Upvalues {
+						if fn1.Upvalues[i] != fn2.Upvalues[i] {
+							ret = false
+							break
+						}
+					}
+				} else {
+					ret = false
+				}
+			} else {
+				ret = false
+			}
+		} else {
+			// Go functions are only equal if they are the same object
+			ret = false
+		}
 	case LTUserData, LTTable:
 		if lhs == rhs {
 			ret = true
