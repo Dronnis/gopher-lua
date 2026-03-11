@@ -37,6 +37,7 @@ var baseFuncs = map[string]LGFunction{
 	"print":          basePrint,
 	"rawequal":       baseRawEqual,
 	"rawget":         baseRawGet,
+	"rawlen":         baseRawLen,
 	"rawset":         baseRawSet,
 	"select":         baseSelect,
 	"_printregs":     base_PrintRegs,
@@ -369,6 +370,23 @@ func baseRawGet(L *LState) int {
 func baseRawSet(L *LState) int {
 	L.RawSet(L.CheckTable(1), L.CheckAny(2), L.CheckAny(3))
 	return 0
+}
+
+// baseRawLen - rawlen (v)
+// Возвращает длину объекта v (таблица или строка) без использования метаметода __len.
+// Возвращает ошибку, если v не таблица и не строка.
+func baseRawLen(L *LState) int {
+	switch v := L.CheckAny(1).(type) {
+	case *LTable:
+		L.Push(LNumberInt(int64(v.Len())))
+		return 1
+	case LString:
+		L.Push(LNumberInt(int64(len(v))))
+		return 1
+	default:
+		L.ArgError(1, "table or string expected")
+		return 0
+	}
 }
 
 func baseSelect(L *LState) int {
