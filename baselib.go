@@ -49,7 +49,6 @@ var baseFuncs = map[string]LGFunction{
 	"unpack":         baseUnpack,
 	"xpcall":         baseXPCall,
 	// loadlib
-	"module":  loModule,
 	"require": loRequire,
 	// hidden features
 	"newproxy": baseNewProxy,
@@ -569,46 +568,6 @@ func baseXPCall(L *LState) int {
 
 /* load lib {{{ */
 
-func loModule(L *LState) int {
-	name := L.CheckString(1)
-	loaded := L.GetField(L.Get(RegistryIndex), "_LOADED")
-	tb := L.GetField(loaded, name)
-	if _, ok := tb.(*LTable); !ok {
-		tb = L.FindTable(L.Get(GlobalsIndex).(*LTable), name, 1)
-		if tb == LNil {
-			L.RaiseError("name conflict for module: %v", name)
-		}
-		L.SetField(loaded, name, tb)
-	}
-	if L.GetField(tb, "_NAME") == LNil {
-		L.SetField(tb, "_M", tb)
-		L.SetField(tb, "_NAME", LString(name))
-		names := strings.Split(name, ".")
-		pname := ""
-		if len(names) > 1 {
-			pname = strings.Join(names[:len(names)-1], ".") + "."
-		}
-		L.SetField(tb, "_PACKAGE", LString(pname))
-	}
-
-	caller := L.currentFrame.Parent
-	if caller == nil {
-		L.RaiseError("no calling stack.")
-	} else if caller.Fn.IsG {
-		L.RaiseError("module() can not be called from GFunctions.")
-	}
-	L.SetFEnv(caller.Fn, tb)
-
-	top := L.GetTop()
-	for i := 2; i <= top; i++ {
-		L.Push(L.Get(i))
-		L.Push(tb)
-		L.Call(1, 0)
-	}
-	L.Push(tb)
-	return 1
-}
-
 var loopdetection = &LUserData{}
 
 func loRequire(L *LState) int {
@@ -622,15 +581,15 @@ func loRequire(L *LState) int {
 		L.Push(lv)
 		return 1
 	}
-	loaders, ok := L.GetField(L.Get(RegistryIndex), "_LOADERS").(*LTable)
+	searchers, ok := L.GetField(L.Get(RegistryIndex), "_SEARCHERS").(*LTable)
 	if !ok {
-		L.RaiseError("package.loaders must be a table")
+		L.RaiseError("package.searchers must be a table")
 	}
 	messages := []string{}
 	var modasfunc LValue
 	var modname LValue
 	for i := 1; ; i++ {
-		loader := L.RawGetInt(loaders, i)
+		loader := L.RawGetInt(searchers, i)
 		if loader == LNil {
 			L.RaiseError("module %s not found:\n\t%s, ", name, strings.Join(messages, "\n\t"))
 		}

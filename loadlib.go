@@ -51,12 +51,12 @@ func OpenPackage(L *LState) int {
 
 	L.SetField(packagemod, "preload", L.NewTable())
 
-	loaders := L.CreateTable(len(loLoaders), 0)
+	searchers := L.CreateTable(len(loLoaders), 0)
 	for i, loader := range loLoaders {
-		L.RawSetInt(loaders, i+1, L.NewFunction(loader))
+		L.RawSetInt(searchers, i+1, L.NewFunction(loader))
 	}
-	L.SetField(packagemod, "loaders", loaders)
-	L.SetField(L.Get(RegistryIndex), "_LOADERS", loaders)
+	L.SetField(packagemod, "searchers", searchers)
+	L.SetField(L.Get(RegistryIndex), "_SEARCHERS", searchers)
 
 	loaded := L.NewTable()
 	L.SetField(packagemod, "loaded", loaded)
