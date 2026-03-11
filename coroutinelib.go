@@ -83,11 +83,13 @@ func coResume(L *LState) int {
 
 func coRunning(L *LState) int {
 	if L.G.MainThread == L {
-		L.Push(LNil)
-		return 1
+		L.Push(L.G.MainThread)
+		L.Push(LTrue)
+		return 2
 	}
 	L.Push(L.G.CurrentThread)
-	return 1
+	L.Push(LFalse)
+	return 2
 }
 
 func coStatus(L *LState) int {
