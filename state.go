@@ -1137,9 +1137,6 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 		cf.NArgs++
 		ls.reg.Insert(fn, cf.LocalBase)
 	}
-	if cf.Fn == nil {
-		ls.RaiseError("attempt to call a non-function object")
-	}
 	if ls.stack.IsFull() {
 		ls.RaiseError("stack overflow")
 	}
@@ -1253,6 +1250,9 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 	}
 	lv := ls.reg.Get(base)
 	fn, meta := ls.metaCall(lv)
+	if fn == nil {
+		ls.RaiseError("attempt to call a " + lv.Type().String() + " value")
+	}
 	ls.pushCallFrame(callFrame{
 		Fn:         fn,
 		Pc:         0,

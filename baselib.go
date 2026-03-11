@@ -338,13 +338,19 @@ func basePrint(L *LState) int {
 	for i := 1; i <= top; i++ {
 		lv := L.Get(i)
 		var s string
-		if lv == LNil {
-			s = "nil"
+		// Use tostring from the environment to convert value to string
+		// This matches Lua 5.3 behavior where print calls tostring from _ENV for all values
+		tostring := L.GetField(L.Env, "tostring")
+		// Call tostring directly (not via PCall) to allow errors to propagate
+		// This way pcall(print, ...) will catch errors from tostring
+		L.Push(tostring)
+		L.Push(lv)
+		L.Call(1, 1)
+		result := L.Get(-1)
+		if resultStr, ok := result.(LString); ok {
+			s = string(resultStr)
 		} else {
-			s = LVAsString(lv)
-			if s == "" && lv.Type() != LTString {
-				s = lv.String()
-			}
+			L.RaiseError("'tostring' must return a string")
 		}
 		fmt.Print(s)
 		if i != top {

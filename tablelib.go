@@ -11,12 +11,14 @@ func OpenTable(L *LState) int {
 }
 
 var tableFuncs = map[string]LGFunction{
-	"getn":   tableGetN,
-	"concat": tableConcat,
-	"insert": tableInsert,
-	"maxn":   tableMaxN,
-	"remove": tableRemove,
-	"sort":   tableSort,
+	"getn":    tableGetN,
+	"concat":  tableConcat,
+	"insert":  tableInsert,
+	"maxn":    tableMaxN,
+	"remove":  tableRemove,
+	"sort":    tableSort,
+	"pack":    tablePack,
+	"unpack":  tableUnpack,
 }
 
 func tableSort(L *LState) int {
@@ -95,6 +97,34 @@ func tableInsert(L *LState) int {
 	}
 	tbl.Insert(int(L.CheckInt(2)), L.CheckAny(3))
 	return 0
+}
+
+// table.pack (...) -> table
+// Returns a new table with all arguments stored into keys 1, 2, etc. and with a field "n" with the total number of arguments.
+func tablePack(L *LState) int {
+	nargs := L.GetTop()
+	tbl := L.NewTable()
+	for i := 1; i <= nargs; i++ {
+		tbl.RawSetInt(i, L.Get(i))
+	}
+	tbl.RawSetString("n", LNumberInt(int64(nargs)))
+	L.Push(tbl)
+	return 1
+}
+
+// table.unpack (table [, i [, j]]) -> ...
+// Returns the elements from the given table.
+func tableUnpack(L *LState) int {
+	tbl := L.CheckTable(1)
+	i := L.OptInt(2, 1)
+	j := L.OptInt(3, tbl.Len())
+	if i > j {
+		return 0
+	}
+	for idx := i; idx <= j; idx++ {
+		L.Push(tbl.RawGetInt(idx))
+	}
+	return j - i + 1
 }
 
 //
