@@ -134,11 +134,13 @@ func baseLoad(L *LState) int {
 	// chunk can be a string or a function
 	chunk := L.Get(1)
 	var reader io.Reader
+	var chunkData string
 
 	switch c := chunk.(type) {
 	case LString:
 		// If chunk is a string, use it directly
-		reader = strings.NewReader(string(c))
+		chunkData = string(c)
+		reader = strings.NewReader(chunkData)
 	case *LFunction:
 		// If chunk is a function, read from it
 		chunkname := L.OptString(2, "?")
@@ -164,6 +166,7 @@ func baseLoad(L *LState) int {
 				return 2
 			}
 		}
+		chunkData = strings.Join(buf, "")
 		// Get environment (4th argument)
 		var env *LTable
 		if L.GetTop() >= 4 {
@@ -171,7 +174,7 @@ func baseLoad(L *LState) int {
 				env = lv
 			}
 		}
-		return loadaux(L, strings.NewReader(strings.Join(buf, "")), chunkname, env)
+		return loadaux(L, strings.NewReader(chunkData), chunkname, env)
 	default:
 		L.Push(LNil)
 		L.Push(LString("bad argument #1 to load (function or string expected, got " + chunk.Type().String() + ")"))
@@ -179,13 +182,31 @@ func baseLoad(L *LState) int {
 	}
 
 	chunkname := L.OptString(2, "<load>")
-	// mode is ignored, env (4th argument) is used
+	mode := L.OptString(3, "bt")  // Default mode is "bt" (both text and binary)
+	
+	// Get environment (4th argument)
 	var env *LTable
 	if L.GetTop() >= 4 {
 		if lv, ok := L.Get(4).(*LTable); ok {
 			env = lv
 		}
 	}
+	
+	// Check mode compatibility (Lua 5.3)
+	// Binary chunks start with the Lua signature: 0x1B 0x4C 0x75 0x61 (ESC Lua)
+	isBinary := len(chunkData) >= 4 && chunkData[0] == '\033' && chunkData[1:4] == "Lua"
+	
+	if mode == "b" && !isBinary {
+		L.Push(LNil)
+		L.Push(LString("attempt to load a text chunk"))
+		return 2
+	}
+	if mode == "t" && isBinary {
+		L.Push(LNil)
+		L.Push(LString("attempt to load a binary chunk"))
+		return 2
+	}
+	
 	return loadaux(L, reader, chunkname, env)
 }
 
