@@ -2,6 +2,7 @@ package lua
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/yuin/gopher-lua/pm"
@@ -34,9 +35,12 @@ var strFuncs = map[string]LGFunction{
 	"len":     strLen,
 	"lower":   strLower,
 	"match":   strMatch,
+	"pack":    strPack,
+	"packsize": strPackSize,
 	"rep":     strRep,
 	"reverse": strReverse,
 	"sub":     strSub,
+	"unpack":  strUnpack,
 	"upper":   strUpper,
 }
 
@@ -429,6 +433,506 @@ func strUpper(L *LState) int {
 	L.Push(LString(strings.ToUpper(str)))
 	return 1
 }
+
+// {{{ string.pack / string.unpack / string.packsize
+
+// Форматы для string.pack/unpack (Lua 5.3)
+const (
+	packLittleEndian = '<'
+	packBigEndian    = '>'
+	packNative       = '='
+	packMaxAlign     = 16
+)
+
+// packFormat описывает опции форматирования
+type packFormat struct {
+	endian    byte
+	align     int
+	options   []packOption
+}
+
+// packOption - отдельная опция упаковки
+type packOption struct {
+	code  byte
+	size  int
+	count int // для повторений
+}
+
+// parsePackFormat разбирает строку формата
+func parsePackFormat(format string) (*packFormat, error) {
+	pf := &packFormat{
+		endian:  packLittleEndian, // Lua 5.3 использует little-endian по умолчанию
+		align:   1,
+		options: make([]packOption, 0),
+	}
+
+	i := 0
+	for i < len(format) {
+		c := format[i]
+
+		// Модификаторы порядка байтов
+		if c == packLittleEndian || c == packBigEndian || c == packNative {
+			pf.endian = c
+			i++
+			continue
+		}
+
+		// Выравнивание
+		if c == '!' {
+			i++
+			if i >= len(format) {
+				return nil, fmt.Errorf("invalid format: missing alignment value")
+			}
+			// Читаем число после !
+			n := 0
+			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				n = n*10 + int(format[i]-'0')
+				i++
+			}
+			if n == 0 {
+				n = 1
+			}
+			if n > packMaxAlign {
+				return nil, fmt.Errorf("invalid format: alignment too large")
+			}
+			pf.align = n
+			continue
+		}
+
+		// Повторения (число перед кодом)
+		count := 1
+		if c >= '0' && c <= '9' {
+			count = 0
+			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				count = count*10 + int(format[i]-'0')
+				i++
+			}
+			if i >= len(format) {
+				return nil, fmt.Errorf("invalid format: missing format code after count")
+			}
+			c = format[i]
+			i++
+		} else {
+			i++
+		}
+
+		// Код формата
+		size := 0
+		switch c {
+		case 'b', 'B': // signed/unsigned char
+			size = 1
+		case 'h', 'H': // signed/unsigned short
+			size = 2
+		case 'l', 'L': // signed/unsigned long
+			size = 4
+		case 'j', 'J': // lua_Integer / lua_Unsigned
+			size = 8 // int64 в Go
+		case 'T': // size_t
+			size = 8
+		case 'f': // float
+			size = 4
+		case 'd', 'n': // double / lua_Number
+			size = 8
+		case 'x': // padding byte
+			size = 1
+		case 'c': // fixed-length string
+			// Читаем длину после c
+			if i >= len(format) {
+				return nil, fmt.Errorf("invalid format: missing length for 'c'")
+			}
+			n := 0
+			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				n = n*10 + int(format[i]-'0')
+				i++
+			}
+			size = n
+		case 'z', 's': // zero-terminated string / string with size
+			size = -1 // variable size
+		default:
+			return nil, fmt.Errorf("invalid format code: %c", c)
+		}
+
+		pf.options = append(pf.options, packOption{code: c, size: size, count: count})
+	}
+
+	return pf, nil
+}
+
+// alignTo выравнивает позицию до следующей границы выравнивания
+func alignTo(pos, align int) int {
+	if align <= 1 {
+		return pos
+	}
+	return (pos + align - 1) & ^(align - 1)
+}
+
+// writeEndian записывает число с учётом порядка байтов
+func writeEndian(buf []byte, pos int, value uint64, size int, endian byte) {
+	if endian == packBigEndian {
+		for i := size - 1; i >= 0; i-- {
+			buf[pos+i] = byte(value & 0xFF)
+			value >>= 8
+		}
+	} else { // little-endian или native (little-endian для x86/x64)
+		for i := 0; i < size; i++ {
+			buf[pos+i] = byte(value & 0xFF)
+			value >>= 8
+		}
+	}
+}
+
+// readEndian читает число с учётом порядка байтов
+func readEndian(buf []byte, pos int, size int, endian byte) uint64 {
+	var value uint64 = 0
+	if endian == packBigEndian {
+		for i := 0; i < size; i++ {
+			value = (value << 8) | uint64(buf[pos+i])
+		}
+	} else { // little-endian
+		for i := size - 1; i >= 0; i-- {
+			value = (value << 8) | uint64(buf[pos+i])
+		}
+	}
+	return value
+}
+
+// strPack - string.pack(fmt, v1, v2, ...)
+func strPack(L *LState) int {
+	fmtStr := L.CheckString(1)
+	pf, err := parsePackFormat(fmtStr)
+	if err != nil {
+		L.ArgError(1, err.Error())
+	}
+
+	// Сначала вычисляем размер
+	totalSize := 0
+	argIdx := 2
+
+	for _, opt := range pf.options {
+		for c := 0; c < opt.count; c++ {
+			if opt.code == '!' {
+				totalSize = alignTo(totalSize, pf.align)
+				continue
+			}
+
+			if opt.code == 'x' {
+				totalSize += opt.size
+				continue
+			}
+
+			if opt.code == 'c' {
+				totalSize += opt.size
+				continue
+			}
+
+			if opt.code == 'z' || opt.code == 's' {
+				if argIdx > L.GetTop() {
+					L.ArgError(argIdx, "missing argument")
+				}
+				str := L.CheckString(argIdx)
+				argIdx++
+				if opt.code == 'z' {
+					totalSize += len(str) + 1 // +1 для нулевого терминатора
+				} else {
+					// 's' - строка с размером (size_t + данные)
+					totalSize += 8 + len(str)
+				}
+				continue
+			}
+
+			// Числовые типы
+			if argIdx > L.GetTop() {
+				L.ArgError(argIdx, "missing argument")
+			}
+			argIdx++
+
+			if opt.size < 0 {
+				continue
+			}
+			totalSize += opt.size
+		}
+	}
+
+	// Выделяем буфер
+	buf := make([]byte, totalSize)
+	pos := 0
+	argIdx = 2
+
+	for _, opt := range pf.options {
+		for c := 0; c < opt.count; c++ {
+			// Применяем выравнивание
+			if opt.code == '!' {
+				pos = alignTo(pos, pf.align)
+				continue
+			}
+
+			if opt.code == 'x' {
+				// Padding byte (нулевой)
+				for i := 0; i < opt.size; i++ {
+					buf[pos] = 0
+					pos++
+				}
+				continue
+			}
+
+			if opt.code == 'c' {
+				// Фиксированная строка
+				if argIdx > L.GetTop() {
+					L.ArgError(argIdx, "missing argument")
+				}
+				str := L.CheckString(argIdx)
+				argIdx++
+				copyLen := len(str)
+				if copyLen > opt.size {
+					copyLen = opt.size
+				}
+				copy(buf[pos:], str[:copyLen])
+				// Заполняем остаток нулями
+				for i := copyLen; i < opt.size; i++ {
+					buf[pos+i] = 0
+				}
+				pos += opt.size
+				continue
+			}
+
+			if opt.code == 'z' {
+				// Строка с нулевым терминатором
+				if argIdx > L.GetTop() {
+					L.ArgError(argIdx, "missing argument")
+				}
+				str := L.CheckString(argIdx)
+				argIdx++
+				copy(buf[pos:], str)
+				buf[pos+len(str)] = 0
+				pos += len(str) + 1
+				continue
+			}
+
+			if opt.code == 's' {
+				// Строка с размером (size_t + данные)
+				if argIdx > L.GetTop() {
+					L.ArgError(argIdx, "missing argument")
+				}
+				str := L.CheckString(argIdx)
+				argIdx++
+				// Записываем размер как size_t (8 байт)
+				writeEndian(buf, pos, uint64(len(str)), 8, pf.endian)
+				pos += 8
+				copy(buf[pos:], str)
+				pos += len(str)
+				continue
+			}
+
+			// Числовые типы
+			if argIdx > L.GetTop() {
+				L.ArgError(argIdx, "missing argument")
+			}
+			var value int64
+			switch v := L.Get(argIdx).(type) {
+			case LNumber:
+				value = v.Int64()
+			case LString:
+				// Пытаемся распарсить строку как число
+				if n, err := parseNumber(string(v)); err == nil {
+					value = n.Int64()
+				}
+			}
+			argIdx++
+
+			// Для знаковых типов нужно правильно обработать отрицательные числа
+			var uvalue uint64
+			switch opt.code {
+			case 'b': // signed char
+				uvalue = uint64(int8(value))
+			case 'B': // unsigned char
+				uvalue = uint64(uint8(value))
+			case 'h': // signed short
+				uvalue = uint64(int16(value))
+			case 'H': // unsigned short
+				uvalue = uint64(uint16(value))
+			case 'l': // signed long
+				uvalue = uint64(int32(value))
+			case 'L': // unsigned long
+				uvalue = uint64(uint32(value))
+			case 'j', 'J', 'T': // int64 / uint64
+				uvalue = uint64(value)
+			case 'f': // float
+				uvalue = uint64(math.Float32bits(float32(L.Get(argIdx-1).(LNumber).Float64())))
+			case 'd', 'n': // double
+				uvalue = math.Float64bits(L.Get(argIdx-1).(LNumber).Float64())
+			}
+
+			writeEndian(buf, pos, uvalue, opt.size, pf.endian)
+			pos += opt.size
+		}
+	}
+
+	L.Push(LString(string(buf)))
+	return 1
+}
+
+// strUnpack - string.unpack(fmt, s [, pos])
+func strUnpack(L *LState) int {
+	fmtStr := L.CheckString(1)
+	s := L.CheckString(2)
+	pos := L.OptInt(3, 1) - 1 // 0-based
+
+	pf, err := parsePackFormat(fmtStr)
+	if err != nil {
+		L.ArgError(1, err.Error())
+	}
+
+	if pos < 0 || pos > len(s) {
+		L.ArgError(2, "initial position out of range")
+	}
+
+	results := make([]LValue, 0)
+
+	for _, opt := range pf.options {
+		for c := 0; c < opt.count; c++ {
+			// Применяем выравнивание
+			if opt.code == '!' {
+				pos = alignTo(pos, pf.align)
+				continue
+			}
+
+			if opt.code == 'x' {
+				// Padding byte - просто пропускаем
+				pos += opt.size
+				continue
+			}
+
+			if opt.code == 'c' {
+				// Фиксированная строка
+				if pos+opt.size > len(s) {
+					L.ArgError(2, "data string too short")
+				}
+				str := string(s[pos : pos+opt.size])
+				// Удаляем нулевые байты с конца
+				for len(str) > 0 && str[len(str)-1] == 0 {
+					str = str[:len(str)-1]
+				}
+				results = append(results, LString(str))
+				pos += opt.size
+				continue
+			}
+
+			if opt.code == 'z' {
+				// Строка с нулевым терминатором
+				start := pos
+				for pos < len(s) && s[pos] != 0 {
+					pos++
+				}
+				if pos >= len(s) {
+					L.ArgError(2, "data string too short")
+				}
+				results = append(results, LString(s[start:pos]))
+				pos++ // пропускаем нулевой байт
+				continue
+			}
+
+			if opt.code == 's' {
+				// Строка с размером
+				if pos+8 > len(s) {
+					L.ArgError(2, "data string too short")
+				}
+				strLen := int(readEndian([]byte(s), pos, 8, pf.endian))
+				pos += 8
+				if pos+strLen > len(s) {
+					L.ArgError(2, "data string too short")
+				}
+				results = append(results, LString(s[pos:pos+strLen]))
+				pos += strLen
+				continue
+			}
+
+			// Числовые типы
+			if pos+opt.size > len(s) {
+				L.ArgError(2, "data string too short")
+			}
+
+			uvalue := readEndian([]byte(s), pos, opt.size, pf.endian)
+			pos += opt.size
+
+			var value LValue
+			switch opt.code {
+			case 'b': // signed char
+				value = LNumberInt(int64(int8(uvalue)))
+			case 'B': // unsigned char
+				value = LNumberInt(int64(uvalue))
+			case 'h': // signed short
+				value = LNumberInt(int64(int16(uvalue)))
+			case 'H': // unsigned short
+				value = LNumberInt(int64(uvalue))
+			case 'l': // signed long
+				value = LNumberInt(int64(int32(uvalue)))
+			case 'L': // unsigned long
+				value = LNumberInt(int64(uvalue))
+			case 'j', 'J', 'T': // int64 / uint64
+				value = LNumberInt(int64(uvalue))
+			case 'f': // float
+				value = LNumberFloat(float64(math.Float32frombits(uint32(uvalue))))
+			case 'd', 'n': // double
+				value = LNumberFloat(math.Float64frombits(uvalue))
+			}
+			results = append(results, value)
+		}
+	}
+
+	// Возвращаем распакованные значения и следующую позицию
+	for _, v := range results {
+		L.Push(v)
+	}
+	L.Push(LNumberInt(int64(pos + 1))) // 1-based позиция
+
+	return len(results) + 1
+}
+
+// strPackSize - string.packsize(fmt)
+func strPackSize(L *LState) int {
+	fmtStr := L.CheckString(1)
+	pf, err := parsePackFormat(fmtStr)
+	if err != nil {
+		L.ArgError(1, err.Error())
+	}
+
+	totalSize := 0
+	for _, opt := range pf.options {
+		for c := 0; c < opt.count; c++ {
+			if opt.code == '!' {
+				totalSize = alignTo(totalSize, pf.align)
+				continue
+			}
+
+			if opt.code == 'x' {
+				totalSize += opt.size
+				continue
+			}
+
+			if opt.code == 'c' {
+				totalSize += opt.size
+				continue
+			}
+
+			if opt.code == 'z' || opt.code == 's' {
+				// Переменный размер - не можем вычислить
+				L.Push(LNil)
+				return 1
+			}
+
+			if opt.size < 0 {
+				L.Push(LNil)
+				return 1
+			}
+			totalSize += opt.size
+		}
+	}
+
+	L.Push(LNumberInt(int64(totalSize)))
+	return 1
+}
+
+// }}}
 
 func luaIndex2StringIndex(str string, i int, start bool) int {
 	if start && i != 0 {
