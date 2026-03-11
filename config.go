@@ -55,7 +55,7 @@ var LuaIgMark = "-"
 func init() {
 	if os.PathSeparator == '/' { // unix-like
 		LuaOS = "unix"
-		LuaLDir = "/usr/local/share/lua/5.1"
+		LuaLDir = "/usr/local/share/lua/5.3"
 		LuaDirSep = "/"
 		LuaPathDefault = "./?.lua;" + LuaLDir + "/?.lua;" + LuaLDir + "/?/init.lua"
 	} else { // windows
