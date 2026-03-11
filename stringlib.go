@@ -396,10 +396,24 @@ func strMatch(L *LState) int {
 func strRep(L *LState) int {
 	str := L.CheckString(1)
 	n := L.CheckInt(2)
-	if n < 0 {
+	sep := L.OptString(3, "")
+	
+	if n <= 0 {
 		L.Push(emptyLString)
-	} else {
+	} else if sep == "" {
+		// Без разделителя - просто повторяем строку
 		L.Push(LString(strings.Repeat(str, n)))
+	} else {
+		// С разделителем - вставляем между повторениями
+		// Для n повторений нужно n-1 разделителей
+		result := make([]byte, 0, len(str)*n+len(sep)*(n-1))
+		for i := 0; i < n; i++ {
+			if i > 0 {
+				result = append(result, sep...)
+			}
+			result = append(result, str...)
+		}
+		L.Push(LString(string(result)))
 	}
 	return 1
 }
