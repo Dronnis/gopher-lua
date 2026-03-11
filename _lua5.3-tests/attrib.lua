@@ -74,6 +74,8 @@ end
 
 
 local function createfiles (files, preextras, posextras)
+  -- Create the directory if it doesn't exist
+  os.execute(dirsep == '\\' and 'mkdir libs 2>nul' or 'mkdir -p libs')
   for n,c in pairs(files) do
     io.output(D(n))
     io.write(string.format(preextras, n))

@@ -173,9 +173,40 @@ func osRename(L *LState) int {
 	}
 }
 
+// Supported locales
+var supportedLocales = map[string]bool{
+	"C":       true,
+	"POSIX":   true,
+	"":        true, // empty string means native locale
+	"en_US":   true,
+	"en_US.UTF-8": true,
+	"ru_RU":   true,
+	"ru_RU.UTF-8": true,
+}
+
+// currentLocale stores the current locale setting
+var currentLocale = "C"
+
 func osSetLocale(L *LState) int {
-	// setlocale is not supported
-	L.Push(LFalse)
+	// Lua 5.3 compatibility: os.setlocale([locale [, category]])
+	// category is ignored in this implementation
+	locale := L.OptString(1, "")
+	
+	// If locale is empty, return current locale
+	if locale == "" {
+		L.Push(LString(currentLocale))
+		return 1
+	}
+	
+	// Check if locale is supported
+	if supportedLocales[locale] || strings.HasPrefix(locale, "C.") || strings.HasPrefix(locale, "en_US.") || strings.HasPrefix(locale, "ru_RU.") {
+		currentLocale = locale
+		L.Push(LString(currentLocale))
+		return 1
+	}
+	
+	// Locale not supported
+	L.Push(LNil)
 	return 1
 }
 

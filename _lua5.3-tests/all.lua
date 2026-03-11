@@ -1,4 +1,4 @@
-#!../lua
+--#!../lua
 -- $Id: all.lua,v 1.95 2016/11/07 13:11:28 roberto Exp $
 -- See Copyright Notice at the end of this file
 

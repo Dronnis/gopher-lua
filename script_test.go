@@ -28,6 +28,7 @@ var gluaTests []string = []string{
 }
 
 var luaTests []string = []string{
+	"all.lua",
 	"attrib.lua",
 	"calls.lua",
 	"closure.lua",
