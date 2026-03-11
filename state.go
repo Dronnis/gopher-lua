@@ -1864,39 +1864,6 @@ func (ls *LState) SetUpvalue(fn *LFunction, no int, lv LValue) string {
 
 /* }}} */
 
-/* env operations {{{ */
-
-func (ls *LState) GetFEnv(obj LValue) LValue {
-	switch lv := obj.(type) {
-	case *LFunction:
-		return lv.Env
-	case *LUserData:
-		return lv.Env
-	case *LState:
-		return lv.Env
-	}
-	return LNil
-}
-
-func (ls *LState) SetFEnv(obj LValue, env LValue) {
-	tb, ok := env.(*LTable)
-	if !ok {
-		ls.RaiseError("cannot use %v as an environment", env.Type().String())
-	}
-
-	switch lv := obj.(type) {
-	case *LFunction:
-		lv.Env = tb
-	case *LUserData:
-		lv.Env = tb
-	case *LState:
-		lv.Env = tb
-	}
-	/* do nothing */
-}
-
-/* }}} */
-
 /* table operations {{{ */
 
 func (ls *LState) RawGet(tb *LTable, key LValue) LValue {

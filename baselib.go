@@ -28,7 +28,6 @@ var baseFuncs = map[string]LGFunction{
 	"collectgarbage": baseCollectGarbage,
 	"dofile":         baseDoFile,
 	"error":          baseError,
-	"getfenv":        baseGetFEnv,
 	"getmetatable":   baseGetMetatable,
 	"load":           baseLoad,
 	"loadfile":       baseLoadFile,
@@ -41,7 +40,6 @@ var baseFuncs = map[string]LGFunction{
 	"rawset":         baseRawSet,
 	"select":         baseSelect,
 	"_printregs":     base_PrintRegs,
-	"setfenv":        baseSetFEnv,
 	"setmetatable":   baseSetMetatable,
 	"tonumber":       baseToNumber,
 	"tostring":       baseToString,
@@ -85,45 +83,6 @@ func baseError(L *LState) int {
 	level := L.OptInt(2, 1)
 	L.Error(obj, level)
 	return 0
-}
-
-func baseGetFEnv(L *LState) int {
-	var value LValue
-	if L.GetTop() == 0 {
-		value = LNumberInt(1)
-	} else {
-		value = L.Get(1)
-	}
-
-	if fn, ok := value.(*LFunction); ok {
-		if !fn.IsG {
-			L.Push(fn.Env)
-		} else {
-			L.Push(L.G.Global)
-		}
-		return 1
-	}
-
-	if number, ok := value.(LNumber); ok {
-		level := int(number.Int64())
-		if level <= 0 {
-			L.Push(L.Env)
-		} else {
-			cf := L.currentFrame
-			for i := 0; i < level && cf != nil; i++ {
-				cf = cf.Parent
-			}
-			if cf == nil || cf.Fn.IsG {
-				L.Push(L.G.Global)
-			} else {
-				L.Push(cf.Fn.Env)
-			}
-		}
-		return 1
-	}
-
-	L.Push(L.G.Global)
-	return 1
 }
 
 func baseGetMetatable(L *LState) int {
@@ -406,49 +365,6 @@ func baseSelect(L *LState) int {
 		L.Push(LNumberInt(int64(L.GetTop() - 1)))
 		return 1
 	}
-	return 0
-}
-
-func baseSetFEnv(L *LState) int {
-	var value LValue
-	if L.GetTop() == 0 {
-		value = LNumberInt(1)
-	} else {
-		value = L.Get(1)
-	}
-	env := L.CheckTable(2)
-
-	if fn, ok := value.(*LFunction); ok {
-		if fn.IsG {
-			L.RaiseError("cannot change the environment of given object")
-		} else {
-			fn.Env = env
-			L.Push(fn)
-			return 1
-		}
-	}
-
-	if number, ok := value.(LNumber); ok {
-		level := int(number.Int64())
-		if level <= 0 {
-			L.Env = env
-			return 0
-		}
-
-		cf := L.currentFrame
-		for i := 0; i < level && cf != nil; i++ {
-			cf = cf.Parent
-		}
-		if cf == nil || cf.Fn.IsG {
-			L.RaiseError("cannot change the environment of given object")
-		} else {
-			cf.Fn.Env = env
-			L.Push(cf.Fn)
-			return 1
-		}
-	}
-
-	L.RaiseError("cannot change the environment of given object")
 	return 0
 }
 
