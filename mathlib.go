@@ -304,11 +304,15 @@ func mathToInteger(L *LState) int {
 
 // math.type returns "integer" or "float"
 func mathType(L *LState) int {
-	v := L.CheckNumber(1)
-	if v.IsInteger() {
-		L.Push(LString("integer"))
+	v := L.CheckAny(1)
+	if num, ok := v.(LNumber); ok {
+		if num.IsInteger() {
+			L.Push(LString("integer"))
+		} else {
+			L.Push(LString("float"))
+		}
 	} else {
-		L.Push(LString("float"))
+		L.RaiseError("number expected, got %s", v.Type().String())
 	}
 	return 1
 }

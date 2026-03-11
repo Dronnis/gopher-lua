@@ -29,6 +29,7 @@ var baseFuncs = map[string]LGFunction{
 	"dofile":         baseDoFile,
 	"error":          baseError,
 	"getmetatable":   baseGetMetatable,
+	"isinteger":      baseIsInteger,
 	"load":           baseLoad,
 	"loadfile":       baseLoadFile,
 	"loadstring":     baseLoadString,
@@ -387,6 +388,24 @@ func baseRawLen(L *LState) int {
 		L.ArgError(1, "table or string expected")
 		return 0
 	}
+}
+
+// baseIsInteger - isinteger (x)
+// Проверяет, является ли значение целым числом.
+// Возвращает true, если значение является целым числом, false в противном случае.
+// Для нечисловых типов возвращает false.
+func baseIsInteger(L *LState) int {
+	v := L.CheckAny(1)
+	if num, ok := v.(LNumber); ok {
+		if num.IsInteger() {
+			L.Push(LTrue)
+		} else {
+			L.Push(LFalse)
+		}
+	} else {
+		L.Push(LFalse)
+	}
+	return 1
 }
 
 func baseSelect(L *LState) int {
