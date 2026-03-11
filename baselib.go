@@ -183,7 +183,7 @@ func baseLoad(L *LState) int {
 
 	chunkname := L.OptString(2, "<load>")
 	mode := L.OptString(3, "bt")  // Default mode is "bt" (both text and binary)
-	
+
 	// Get environment (4th argument)
 	var env *LTable
 	if L.GetTop() >= 4 {
@@ -191,11 +191,18 @@ func baseLoad(L *LState) int {
 			env = lv
 		}
 	}
-	
+
 	// Check mode compatibility (Lua 5.3)
 	// Binary chunks start with the Lua signature: 0x1B 0x4C 0x75 0x61 (ESC Lua)
-	isBinary := len(chunkData) >= 4 && chunkData[0] == '\033' && chunkData[1:4] == "Lua"
-	
+	// We need to check the raw bytes, not the string representation
+	isBinary := false
+	if len(chunkData) >= 4 {
+		// Check for Lua binary signature: ESC + "Lua"
+		if chunkData[0] == 0x1B && chunkData[1] == 'L' && chunkData[2] == 'u' && chunkData[3] == 'a' {
+			isBinary = true
+		}
+	}
+
 	if mode == "b" && !isBinary {
 		L.Push(LNil)
 		L.Push(LString("attempt to load a text chunk"))
@@ -206,7 +213,7 @@ func baseLoad(L *LState) int {
 		L.Push(LString("attempt to load a binary chunk"))
 		return 2
 	}
-	
+
 	return loadaux(L, reader, chunkname, env)
 }
 
