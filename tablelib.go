@@ -15,6 +15,7 @@ var tableFuncs = map[string]LGFunction{
 	"concat":  tableConcat,
 	"insert":  tableInsert,
 	"maxn":    tableMaxN,
+	"move":    tableMove,
 	"remove":  tableRemove,
 	"sort":    tableSort,
 	"pack":    tablePack,
@@ -97,6 +98,51 @@ func tableInsert(L *LState) int {
 	}
 	tbl.Insert(int(L.CheckInt(2)), L.CheckAny(3))
 	return 0
+}
+
+// table.move (a1, f, e, t [, a2]) -> table
+// Moves elements from table a1 starting at index f up to index e to table a2 starting at index t.
+// Returns a2. If a2 is omitted, it defaults to a1.
+func tableMove(L *LState) int {
+	a1 := L.CheckTable(1)
+	f := L.CheckInt(2)
+	e := L.CheckInt(3)
+	t := L.CheckInt(4)
+	
+	var a2 *LTable
+	if L.GetTop() >= 5 {
+		a2 = L.CheckTable(5)
+	} else {
+		a2 = a1
+	}
+
+	// Convert to 0-based indexing for internal operations
+	f0 := f - 1
+	e0 := e - 1
+	t0 := t - 1
+
+	if f0 > e0 {
+		L.Push(a2)
+		return 1
+	}
+
+	// Determine direction of copy to handle overlapping ranges
+	if a1 == a2 && t0 > f0 {
+		// Copy backwards to avoid overwriting elements that haven't been copied yet
+		for i := e0; i >= f0; i-- {
+			val := a1.RawGetInt(i + 1) // RawGetInt uses 1-based indexing
+			a2.RawSetInt(t0 + (i - f0) + 1, val)
+		}
+	} else {
+		// Copy forwards
+		for i := f0; i <= e0; i++ {
+			val := a1.RawGetInt(i + 1) // RawGetInt uses 1-based indexing
+			a2.RawSetInt(t0 + (i - f0) + 1, val)
+		}
+	}
+
+	L.Push(a2)
+	return 1
 }
 
 // table.pack (...) -> table
