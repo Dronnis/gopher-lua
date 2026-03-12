@@ -83,19 +83,21 @@ func OpenDebug(L *LState) int {
 }
 
 var debugFuncs = map[string]LGFunction{
-	"gethook":      debugGetHook,
-	"getinfo":      debugGetInfo,
-	"getlocal":     debugGetLocal,
-	"getmetatable": debugGetMetatable,
-	"getregistry":  debugGetRegistry,
-	"getupvalue":   debugGetUpvalue,
-	"sethook":      debugSetHook,
-	"setlocal":     debugSetLocal,
-	"setmetatable": debugSetMetatable,
-	"setupvalue":   debugSetUpvalue,
-	"traceback":    debugTraceback,
-	"upvalueid":    debugUpvalueID,
-	"upvaluejoin":  debugUpvalueJoin,
+	"gethook":       debugGetHook,
+	"getinfo":       debugGetInfo,
+	"getlocal":      debugGetLocal,
+	"getmetatable":  debugGetMetatable,
+	"getregistry":   debugGetRegistry,
+	"getupvalue":    debugGetUpvalue,
+	"getuservalue":  debugGetUserValue,
+	"sethook":       debugSetHook,
+	"setlocal":      debugSetLocal,
+	"setmetatable":  debugSetMetatable,
+	"setupvalue":    debugSetUpvalue,
+	"setuservalue":  debugSetUserValue,
+	"traceback":     debugTraceback,
+	"upvalueid":     debugUpvalueID,
+	"upvaluejoin":   debugUpvalueJoin,
 }
 
 func debugGetInfo(L *LState) int {
@@ -211,6 +213,44 @@ func debugSetUpvalue(L *LState) int {
 	} else {
 		L.Push(LNil)
 	}
+	return 1
+}
+
+// debug.getuservalue(udata)
+// Returns the user value associated with the userdata.
+// In Lua 5.3+, this returns the environment table or nil.
+func debugGetUserValue(L *LState) int {
+	ud := L.CheckUserData(1)
+	
+	// In GopherLua, LUserData has an Env field that serves as uservalue
+	if ud.Env != nil {
+		L.Push(ud.Env)
+	} else {
+		L.Push(LNil)
+	}
+	return 1
+}
+
+// debug.setuservalue(value, udata)
+// Sets the user value associated with the userdata.
+// Returns the userdata.
+func debugSetUserValue(L *LState) int {
+	value := L.CheckAny(1)
+	ud := L.CheckUserData(2)
+	
+	// The value must be a table or nil (Lua 5.3 compatibility)
+	if value != LNil {
+		if _, ok := value.(*LTable); !ok {
+			L.ArgError(1, "table expected or nil")
+			return 0
+		}
+	}
+	
+	// Set the Env field of the userdata
+	ud.Env, _ = value.(*LTable)
+	
+	// Return the userdata
+	L.Push(ud)
 	return 1
 }
 
