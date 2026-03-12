@@ -353,6 +353,7 @@ func (nm LNumber) Div(other LNumber) LNumber {
 }
 
 // IDiv performs integer division following Lua 5.3 semantics (floor division)
+// Lua 5.3: floor division preserves the type of operands - if either operand is float, result is float
 func (nm LNumber) IDiv(other LNumber) LNumber {
 	a := nm.Float64()
 	b := other.Float64()
@@ -369,8 +370,9 @@ func (nm LNumber) IDiv(other LNumber) LNumber {
 	}
 	result := a / b
 	floored := math.Floor(result)
-	// Return integer if the result is a whole number and fits in int64
-	if floored == float64(int64(floored)) && !math.IsInf(floored, 0) {
+	// Lua 5.3: if either operand is float, result should be float
+	// Only return integer if BOTH operands are integers AND result fits in int64
+	if nm.IsInteger() && other.IsInteger() && floored == float64(int64(floored)) && !math.IsInf(floored, 0) {
 		return LNumberInt(int64(floored))
 	}
 	return LNumberFloat(floored)
