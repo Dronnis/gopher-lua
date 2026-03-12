@@ -91,9 +91,8 @@ func strDump(L *LState) int {
 	strip := L.OptBool(2, false)
 
 	if fn.IsG {
-		L.Push(LNil)
-		L.Push(LString("unable to dump Go functions"))
-		return 2
+		L.RaiseError("unable to dump Go functions")
+		return 0
 	}
 
 	// Serialize the function prototype

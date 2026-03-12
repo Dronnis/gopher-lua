@@ -399,7 +399,7 @@ var yyErrorMessages = [...]struct {
 
 var (
 	yyDebug        = 0
-	yyErrorVerbose = false
+	yyErrorVerbose = true
 )
 
 type yyLexer interface {
@@ -455,11 +455,12 @@ func yyErrorMessage(state, lookAhead int) string {
 
 	for _, e := range yyErrorMessages {
 		if e.state == state && e.token == lookAhead {
-			return "syntax error: " + e.msg
+			return e.msg
 		}
 	}
 
-	res := "syntax error: unexpected " + yyTokname(lookAhead)
+	// Lua 5.3 compatible error message format
+	res := "unexpected symbol near '" + yyTokname(lookAhead) + "'"
 
 	// To match Bison, suggest at most four expected tokens.
 	expected := make([]int, 0, 4)

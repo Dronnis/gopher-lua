@@ -500,7 +500,7 @@ redo:
 			tok.Str = string(rune(ch))
 		default:
 			writeChar(buf, ch)
-			err = sc.Error(buf.String(), "Invalid token")
+			err = sc.Error(buf.String(), "unexpected symbol near '"+buf.String()+"'")
 			goto finally
 		}
 	}

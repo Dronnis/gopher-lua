@@ -121,7 +121,7 @@ func baseIpairs(L *LState) int {
 	return 3
 }
 
-func loadaux(L *LState, reader io.Reader, chunkname string, env *LTable) int {
+func loadaux(L *LState, reader io.Reader, chunkname string, env LValue) int {
 	if fn, err := L.Load(reader, chunkname); err != nil {
 		L.Push(LNil)
 		L.Push(LString(err.Error()))
@@ -129,7 +129,12 @@ func loadaux(L *LState, reader io.Reader, chunkname string, env *LTable) int {
 	} else {
 		// Set the environment for the loaded function
 		if env != nil {
-			fn.Env = env
+			if tb, ok := env.(*LTable); ok {
+				fn.Env = tb
+			}
+			// For non-table environments, Lua 5.3 sets the _ENV upvalue
+			// This is more complex and requires upvalue manipulation
+			// For now, we only support table environments
 		}
 		L.Push(fn)
 		return 1
@@ -143,12 +148,13 @@ func baseLoad(L *LState) int {
 	chunkname := L.OptString(2, "<load>")
 	mode := L.OptString(3, "bt")  // Default mode is "bt" (both text and binary)
 
-	// Get environment (4th argument)
+	// Get environment (4th argument) - must be a table in GopherLua
 	var env *LTable
 	if L.GetTop() >= 4 {
 		if lv, ok := L.Get(4).(*LTable); ok {
 			env = lv
 		}
+		// Non-table environments are not supported in GopherLua
 	}
 
 	var reader io.Reader
@@ -166,7 +172,12 @@ func baseLoad(L *LState) int {
 		for {
 			L.SetTop(top)
 			L.Push(c)
-			L.Call(0, 1)
+			err := L.PCall(0, 1, nil)
+			if err != nil {
+				L.Push(LNil)
+				L.Push(LString("error loading module: " + err.Error()))
+				return 2
+			}
 			ret := L.reg.Pop()
 			if ret == LNil {
 				break
