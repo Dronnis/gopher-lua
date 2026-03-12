@@ -12,6 +12,86 @@ func init() {
 	startedAt = time.Now()
 }
 
+// Locale categories (Lua 5.3 compatible)
+const (
+	LocaleCategoryAll      = "all"
+	LocaleCategoryCollate  = "collate"
+	LocaleCategoryCtype    = "ctype"
+	LocaleCategoryMonetary = "monetary"
+	LocaleCategoryNumeric  = "numeric"
+	LocaleCategoryTime     = "time"
+)
+
+// currentLocales stores the current locale settings for each category
+var currentLocales = map[string]string{
+	LocaleCategoryAll:      "C",
+	LocaleCategoryCollate:  "C",
+	LocaleCategoryCtype:    "C",
+	LocaleCategoryMonetary: "C",
+	LocaleCategoryNumeric:  "C",
+	LocaleCategoryTime:     "C",
+}
+
+// isValidLocale checks if a locale name is potentially valid
+// Since Go doesn't have full locale support, we accept any non-empty string
+func isValidLocale(locale string) bool {
+	// Accept any non-empty locale string
+	// Common locale names: C, POSIX, en_US, en_US.UTF-8, ru_RU, ru_RU.UTF-8, etc.
+	if locale == "" {
+		return false
+	}
+	// Basic validation: locale names typically contain letters, numbers, underscores, dots, and hyphens
+	for _, c := range locale {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// getCategory returns the category string from the argument
+func getCategory(L *LState, index int) string {
+	if L.GetTop() < index {
+		return LocaleCategoryAll
+	}
+	cat := L.CheckString(index)
+	switch strings.ToLower(cat) {
+	case "all":
+		return LocaleCategoryAll
+	case "collate":
+		return LocaleCategoryCollate
+	case "ctype":
+		return LocaleCategoryCtype
+	case "monetary":
+		return LocaleCategoryMonetary
+	case "numeric":
+		return LocaleCategoryNumeric
+	case "time":
+		return LocaleCategoryTime
+	default:
+		// Invalid category
+		return ""
+	}
+}
+
+// setLocaleForCategory sets the locale for a specific category
+// In Go, we can't actually change locale, so we just store it
+func setLocaleForCategory(category, locale string) string {
+	// If setting "all", update all categories
+	if category == LocaleCategoryAll {
+		oldLocale := currentLocales[LocaleCategoryAll]
+		for cat := range currentLocales {
+			currentLocales[cat] = locale
+		}
+		return oldLocale
+	}
+
+	// Setting a specific category
+	oldLocale := currentLocales[category]
+	currentLocales[category] = locale
+	return oldLocale
+}
+
 func getIntField(L *LState, tb *LTable, key string, v int) int {
 	ret := tb.RawGetString(key)
 
@@ -173,40 +253,43 @@ func osRename(L *LState) int {
 	}
 }
 
-// Supported locales
-var supportedLocales = map[string]bool{
-	"C":       true,
-	"POSIX":   true,
-	"":        true, // empty string means native locale
-	"en_US":   true,
-	"en_US.UTF-8": true,
-	"ru_RU":   true,
-	"ru_RU.UTF-8": true,
-}
-
-// currentLocale stores the current locale setting
-var currentLocale = "C"
-
+// os.setlocale([locale [, category]])
+// Lua 5.3 compatible implementation
 func osSetLocale(L *LState) int {
-	// Lua 5.3 compatibility: os.setlocale([locale [, category]])
-	// category is ignored in this implementation
+	// Get locale argument (default: empty string = query current locale)
 	locale := L.OptString(1, "")
-	
-	// If locale is empty, return current locale
+
+	// Get category argument (default: "all")
+	category := getCategory(L, 2)
+	if category == "" {
+		// Invalid category
+		L.ArgError(2, "invalid category")
+		return 0
+	}
+
+	// If locale is empty string, return current locale for the category
 	if locale == "" {
-		L.Push(LString(currentLocale))
+		if category == LocaleCategoryAll {
+			// Return the "all" locale
+			L.Push(LString(currentLocales[LocaleCategoryAll]))
+		} else {
+			L.Push(LString(currentLocales[category]))
+		}
 		return 1
 	}
-	
-	// Check if locale is supported
-	if supportedLocales[locale] || strings.HasPrefix(locale, "C.") || strings.HasPrefix(locale, "en_US.") || strings.HasPrefix(locale, "ru_RU.") {
-		currentLocale = locale
-		L.Push(LString(currentLocale))
-		return 1
+
+	// Validate locale name
+	if !isValidLocale(locale) {
+		L.Push(LNil)
+		L.Push(LString("invalid locale name"))
+		return 2
 	}
-	
-	// Locale not supported
-	L.Push(LNil)
+
+	// Set the locale for the specified category
+	oldLocale := setLocaleForCategory(category, locale)
+
+	// Return the previous locale for the category
+	L.Push(LString(oldLocale))
 	return 1
 }
 
