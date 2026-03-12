@@ -313,16 +313,20 @@ type strMatchData struct {
 	matches []*pm.MatchData
 }
 
+// strGmatchIter - итератор для gmatch (внутренняя функция)
+// Вызывается closure который хранит match data в upvalue
 func strGmatchIter(L *LState) int {
-	md := L.CheckUserData(1).Value.(*strMatchData)
+	// Получаем match data из первого upvalue
+	md := L.Get(UpvalueIndex(1)).(*LUserData).Value.(*strMatchData)
 	str := md.str
 	matches := md.matches
 	idx := md.pos
 	md.pos += 1
-	if idx == len(matches) {
+	
+	if idx >= len(matches) {
 		return 0
 	}
-	L.Push(L.Get(1))
+	
 	match := matches[idx]
 	if match.CaptureLength() == 2 {
 		L.Push(LString(str[match.Capture(0):match.Capture(1)]))
@@ -346,11 +350,17 @@ func strGmatch(L *LState) int {
 	if err != nil {
 		L.RaiseError(err.Error())
 	}
-	L.Push(L.Get(UpvalueIndex(1)))
+	
+	// Создаём match data
 	ud := L.NewUserData()
 	ud.Value = &strMatchData{str, 0, mds}
-	L.Push(ud)
-	return 2
+	
+	// Создаём closure с match data в upvalue
+	// В Lua 5.3 string.gmatch возвращает closure с 2 upvalues: state и var
+	// Для совместимости создаём closure с 1 upvalue (match data)
+	iter := L.NewClosure(strGmatchIter, ud)
+	L.Push(iter)
+	return 1
 }
 
 func strLen(L *LState) int {

@@ -445,22 +445,46 @@ func debugGetRegistry(L *LState) int {
 }
 
 // debug.upvalueid(f, n)
+// Returns a unique identifier for the upvalue (like a light userdata in Lua 5.3)
+// The identifier is based on the upvalue's address and can be compared for equality
+// Works for both Lua functions and C (Go) functions
+// Raises an error if the index is out of range (Lua 5.3 behavior)
 func debugUpvalueID(L *LState) int {
 	fn := L.CheckFunction(1)
 	n := L.CheckInt(2)
 
-	if fn.IsG {
-		L.Push(LNil)
+	if n < 1 {
+		L.ArgError(2, "invalid upvalue index")
+		return 0
+	}
+
+	// For Lua functions
+	if !fn.IsG {
+		if n > len(fn.Upvalues) {
+			L.ArgError(2, "invalid upvalue index")
+			return 0
+		}
+		uv := fn.Upvalues[n-1]
+		if uv == nil {
+			L.Push(LNil)
+			return 1
+		}
+		// In Lua 5.3, this returns a light userdata with the upvalue's address
+		// We simulate this by returning a unique string based on the upvalue pointer
+		L.Push(LString(fmt.Sprintf("upvalue_%p", uv)))
 		return 1
 	}
 
-	if n < 1 || n > len(fn.Upvalues) {
-		L.Push(LNil)
-		return 1
+	// For C (Go) functions - they can also have upvalues
+	if n > len(fn.Upvalues) {
+		L.ArgError(2, "invalid upvalue index")
+		return 0
 	}
-
 	uv := fn.Upvalues[n-1]
-	// Return a unique identifier for the upvalue (its address)
+	if uv == nil {
+		L.Push(LNil)
+		return 1
+	}
 	L.Push(LString(fmt.Sprintf("upvalue_%p", uv)))
 	return 1
 }
