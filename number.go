@@ -242,66 +242,33 @@ func (nm LNumber) UnaryMinus() LNumber {
 }
 
 // Add adds two numbers following Lua 5.3 semantics
+// Lua 5.3: integer overflow wraps around (two's complement)
 func (nm LNumber) Add(other LNumber) LNumber {
 	if nm.IsInteger() && other.IsInteger() {
 		a, b := nm.Int64(), other.Int64()
-		// Check for overflow
-		if b > 0 && a > math.MaxInt64-b {
-			return LNumberFloat(float64(a) + float64(b))
-		}
-		if b < 0 && a < math.MinInt64-b {
-			return LNumberFloat(float64(a) + float64(b))
-		}
+		// Lua 5.3: wrap around on overflow (two's complement arithmetic)
 		return LNumberInt(a + b)
 	}
 	return LNumberFloat(nm.Float64() + other.Float64())
 }
 
 // Sub subtracts two numbers following Lua 5.3 semantics
+// Lua 5.3: integer overflow wraps around (two's complement)
 func (nm LNumber) Sub(other LNumber) LNumber {
 	if nm.IsInteger() && other.IsInteger() {
 		a, b := nm.Int64(), other.Int64()
-		// Check for overflow
-		if b < 0 && a > math.MaxInt64+b {
-			return LNumberFloat(float64(a) - float64(b))
-		}
-		if b > 0 && a < math.MinInt64+b {
-			return LNumberFloat(float64(a) - float64(b))
-		}
+		// Lua 5.3: wrap around on overflow (two's complement arithmetic)
 		return LNumberInt(a - b)
 	}
 	return LNumberFloat(nm.Float64() - other.Float64())
 }
 
 // Mul multiplies two numbers following Lua 5.3 semantics
+// Lua 5.3: integer overflow wraps around (two's complement)
 func (nm LNumber) Mul(other LNumber) LNumber {
 	if nm.IsInteger() && other.IsInteger() {
 		a, b := nm.Int64(), other.Int64()
-		// Check for overflow
-		if a == 0 || b == 0 {
-			return LNumberInt(0)
-		}
-		if a > 0 {
-			if b > 0 {
-				if a > math.MaxInt64/b {
-					return LNumberFloat(float64(a) * float64(b))
-				}
-			} else {
-				if b < math.MinInt64/a {
-					return LNumberFloat(float64(a) * float64(b))
-				}
-			}
-		} else {
-			if b > 0 {
-				if a < math.MinInt64/b {
-					return LNumberFloat(float64(a) * float64(b))
-				}
-			} else {
-				if a != 0 && b < math.MaxInt64/a {
-					return LNumberFloat(float64(a) * float64(b))
-				}
-			}
-		}
+		// Lua 5.3: wrap around on overflow (two's complement arithmetic)
 		return LNumberInt(a * b)
 	}
 	return LNumberFloat(nm.Float64() * other.Float64())
@@ -364,13 +331,31 @@ func (nm LNumber) Bxor(other LNumber) LNumber {
 }
 
 // Shl performs bitwise left shift
+// Lua 5.3: shift amounts >= 64 result in 0
 func (nm LNumber) Shl(other LNumber) LNumber {
-	return LNumberInt(nm.Int64() << uint(other.Int64()&63))
+	shift := other.Int64()
+	if shift >= 64 || shift <= -64 {
+		return LNumberInt(0)
+	}
+	if shift < 0 {
+		// Negative shift = right shift
+		return LNumberInt(nm.Int64() >> uint(-shift))
+	}
+	return LNumberInt(nm.Int64() << uint(shift))
 }
 
 // Shr performs bitwise right shift
+// Lua 5.3: shift amounts >= 64 result in 0 (for unsigned) or sign extension (for signed)
 func (nm LNumber) Shr(other LNumber) LNumber {
-	return LNumberInt(nm.Int64() >> uint(other.Int64()&63))
+	shift := other.Int64()
+	if shift >= 64 || shift <= -64 {
+		return LNumberInt(0)
+	}
+	if shift < 0 {
+		// Negative shift = left shift
+		return LNumberInt(nm.Int64() << uint(-shift))
+	}
+	return LNumberInt(nm.Int64() >> uint(shift))
 }
 
 // Bnot performs bitwise NOT

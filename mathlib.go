@@ -154,7 +154,10 @@ func mathLdexp(L *LState) int {
 
 func mathLog(L *LState) int {
 	v := L.CheckNumber(1)
-	L.Push(LNumberFloat(math.Log(v.Float64())))
+	base := L.OptNumber(2, LNumberFloat(math.E))  // Default to natural log
+	// Lua 5.3: math.log(x, base) = log(x) / log(base)
+	result := math.Log(v.Float64()) / math.Log(base.Float64())
+	L.Push(LNumberFloat(result))
 	return 1
 }
 
@@ -302,7 +305,8 @@ func mathToInteger(L *LState) int {
 	return 1
 }
 
-// math.type returns "integer" or "float"
+// math.type returns "integer", "float", or nil
+// Lua 5.3: returns nil for non-numeric values (doesn't raise error)
 func mathType(L *LState) int {
 	v := L.CheckAny(1)
 	if num, ok := v.(LNumber); ok {
@@ -312,7 +316,8 @@ func mathType(L *LState) int {
 			L.Push(LString("float"))
 		}
 	} else {
-		L.RaiseError("number expected, got %s", v.Type().String())
+		// Return nil for non-numeric values (Lua 5.3 behavior)
+		L.Push(LNil)
 	}
 	return 1
 }
