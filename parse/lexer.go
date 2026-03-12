@@ -542,6 +542,31 @@ func (lx *Lexer) TokenError(tok ast.Token, message string) {
 	panic(lx.scanner.TokenError(tok, message))
 }
 
+// skipShebang пропускает shebang строку (#!...) или комментарий (#...) 
+// если они находятся в начале файла. Это необходимо для совместимости с Lua 5.3
+// и Unix-скриптами.
+func (lx *Lexer) skipShebang() {
+	// Проверяем первый символ
+	ch1 := lx.scanner.Next()
+	if ch1 != '#' {
+		// Это не комментарий с #, возвращаем символ обратно
+		if ch1 != EOF {
+			lx.scanner.reader.UnreadByte()
+		}
+		return
+	}
+
+	// Если это shebang (#!) или просто комментарий (#...) в начале файла,
+	// пропускаем до конца строки
+	// В Lua 5.3+ первая строка начинающаяся с # игнорируется (для совместимости с shell)
+	for {
+		ch := lx.scanner.Next()
+		if ch == '\n' || ch == EOF {
+			break
+		}
+	}
+}
+
 func Parse(reader io.Reader, name string) (chunk []ast.Stmt, err error) {
 	lexer := &Lexer{NewScanner(reader, name), nil, false, ast.Token{Str: ""}, TNil}
 	chunk = nil
@@ -550,6 +575,8 @@ func Parse(reader io.Reader, name string) (chunk []ast.Stmt, err error) {
 			err, _ = e.(error)
 		}
 	}()
+	// Lua 5.3: skip shebang line on first line (#!...)
+	lexer.skipShebang()
 	yyParse(lexer)
 	chunk = lexer.Stmts
 	return
