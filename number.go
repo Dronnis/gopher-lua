@@ -171,20 +171,63 @@ func (nm LNumber) Equal(other LNumber) bool {
 	if nm.IsInteger() && other.IsInteger() {
 		return nm.Int64() == other.Int64()
 	}
-	return nm.Float64() == other.Float64()
+	f1 := nm.Float64()
+	f2 := other.Float64()
+	// Handle infinity and NaN properly
+	if math.IsInf(f1, 0) || math.IsInf(f2, 0) {
+		// Both must be the same infinity
+		return math.IsInf(f1, 0) && math.IsInf(f2, 0) && math.Signbit(f1) == math.Signbit(f2)
+	}
+	if math.IsNaN(f1) || math.IsNaN(f2) {
+		// NaN is never equal to anything, including itself
+		return false
+	}
+	return f1 == f2
 }
 
 // Compare compares two LNumbers. Returns -1, 0, or 1
 // For NaN comparisons, returns 0 (special case for Lua semantics)
 func (nm LNumber) Compare(other LNumber) int {
+	// For integers, use integer comparison to avoid float precision loss
+	if nm.IsInteger() && other.IsInteger() {
+		a, b := nm.Int64(), other.Int64()
+		if a < b {
+			return -1
+		} else if a > b {
+			return 1
+		}
+		return 0
+	}
+	
+	// For floats or mixed, use float comparison
 	f1 := nm.Float64()
 	f2 := other.Float64()
-	
+
+	// Handle infinity
+	if math.IsInf(f1, 1) {  // f1 is +inf
+		if math.IsInf(f2, 1) {
+			return 0  // +inf == +inf
+		}
+		return 1  // +inf > anything
+	}
+	if math.IsInf(f1, -1) {  // f1 is -inf
+		if math.IsInf(f2, -1) {
+			return 0  // -inf == -inf
+		}
+		return -1  // -inf < anything
+	}
+	if math.IsInf(f2, 1) {  // f2 is +inf
+		return -1  // anything < +inf
+	}
+	if math.IsInf(f2, -1) {  // f2 is -inf
+		return 1  // anything > -inf
+	}
+
 	// NaN comparisons are special - they always return false
 	if math.IsNaN(f1) || math.IsNaN(f2) {
 		return 0 // This will make all comparisons return false
 	}
-	
+
 	if f1 < f2 {
 		return -1
 	} else if f1 > f2 {
@@ -239,9 +282,14 @@ func (nm LNumber) Abs() LNumber {
 }
 
 // UnaryMinus returns the negation of the number
+// Lua 5.3: integer negation wraps around (two's complement)
 func (nm LNumber) UnaryMinus() LNumber {
 	if nm.IsInteger() {
-		return LNumberInt(-nm.Int64())
+		a := nm.Int64()
+		// Lua 5.3: wrap around on overflow (two's complement arithmetic)
+		// Use uint64 for proper wrap-around: -minint = minint
+		result := uint64(0) - uint64(a)
+		return LNumberInt(int64(result))
 	}
 	return LNumberFloat(-nm.Float64())
 }
@@ -252,7 +300,9 @@ func (nm LNumber) Add(other LNumber) LNumber {
 	if nm.IsInteger() && other.IsInteger() {
 		a, b := nm.Int64(), other.Int64()
 		// Lua 5.3: wrap around on overflow (two's complement arithmetic)
-		return LNumberInt(a + b)
+		// Use uint64 for proper wrap-around behavior
+		result := uint64(a) + uint64(b)
+		return LNumberInt(int64(result))
 	}
 	return LNumberFloat(nm.Float64() + other.Float64())
 }
@@ -263,18 +313,20 @@ func (nm LNumber) Sub(other LNumber) LNumber {
 	if nm.IsInteger() && other.IsInteger() {
 		a, b := nm.Int64(), other.Int64()
 		// Lua 5.3: wrap around on overflow (two's complement arithmetic)
-		return LNumberInt(a - b)
+		// Use uint64 for proper wrap-around behavior
+		result := uint64(a) - uint64(b)
+		return LNumberInt(int64(result))
 	}
 	return LNumberFloat(nm.Float64() - other.Float64())
 }
 
 // Mul multiplies two numbers following Lua 5.3 semantics
-// Lua 5.3: integer overflow wraps around (two's complement)
+// Lua 5.3: integer multiplication uses wrap-around (modular arithmetic mod 2^64)
 func (nm LNumber) Mul(other LNumber) LNumber {
 	if nm.IsInteger() && other.IsInteger() {
 		a, b := nm.Int64(), other.Int64()
-		// Lua 5.3: wrap around on overflow (two's complement arithmetic)
-		// Use uint64 for proper wrap-around behavior
+		// Lua 5.3: pure wrap-around multiplication (mod 2^64)
+		// Use uint64 for proper two's complement wrap-around
 		result := uint64(a) * uint64(b)
 		return LNumberInt(int64(result))
 	}
@@ -283,15 +335,42 @@ func (nm LNumber) Mul(other LNumber) LNumber {
 
 // Div divides two numbers following Lua 5.3 semantics (always returns float)
 func (nm LNumber) Div(other LNumber) LNumber {
-	return LNumberFloat(nm.Float64() / other.Float64())
+	a := nm.Float64()
+	b := other.Float64()
+	// Lua 5.3: division by zero returns inf (not error)
+	if b == 0 {
+		if a == 0 {
+			return LNumberFloat(math.NaN())  // 0/0 = NaN
+		}
+		// Return +inf or -inf based on signs
+		if (a < 0) != (b < 0) {
+			return LNumberFloat(math.Inf(-1))
+		}
+		return LNumberFloat(math.Inf(1))
+	}
+	result := a / b
+	return LNumberFloat(result)
 }
 
 // IDiv performs integer division following Lua 5.3 semantics (floor division)
 func (nm LNumber) IDiv(other LNumber) LNumber {
-	result := nm.Float64() / other.Float64()
+	a := nm.Float64()
+	b := other.Float64()
+	// Lua 5.3: division by zero returns inf
+	if b == 0 {
+		if a == 0 {
+			return LNumberFloat(math.NaN())  // 0/0 = NaN
+		}
+		// Return +inf or -inf based on signs
+		if (a < 0) != (b < 0) {
+			return LNumberFloat(math.Inf(-1))
+		}
+		return LNumberFloat(math.Inf(1))
+	}
+	result := a / b
 	floored := math.Floor(result)
-	// Return integer if the result is a whole number
-	if floored == float64(int64(floored)) {
+	// Return integer if the result is a whole number and fits in int64
+	if floored == float64(int64(floored)) && !math.IsInf(floored, 0) {
 		return LNumberInt(int64(floored))
 	}
 	return LNumberFloat(floored)
