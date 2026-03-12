@@ -60,14 +60,8 @@ func coIsYieldable(L *LState) int {
 		return 1
 	}
 
-	// A running thread (current thread) cannot yield from within itself
-	// (would need to check if we're in a resumable context)
-	if th == L.G.CurrentThread {
-		L.Push(LFalse)
-		return 1
-	}
-
-	// Other threads (suspended coroutines) can yield
+	// A suspended/resumed thread can always yield
+	// (unlike the running main thread)
 	L.Push(LTrue)
 	return 1
 }
