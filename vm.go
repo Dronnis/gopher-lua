@@ -817,6 +817,32 @@ func init() {
 			RA := lbase + A
 			B := int(inst & 0x1ff) //GETB
 			unaryv := L.rkValue(B)
+			
+			// Check for __bnot metamethod
+			op := L.metaOp1(unaryv, "__bnot")
+			if fn, ok := op.(*LFunction); ok {
+				L.reg.Push(fn)
+				L.reg.Push(unaryv)
+				L.Call(1, 1)
+				{
+					rg := reg
+					regi := RA
+					vali := L.reg.Pop()
+					newSize := regi + 1
+					{
+						requiredSize := newSize
+						if requiredSize > cap(rg.array) {
+							rg.resize(requiredSize)
+						}
+					}
+					rg.array[regi] = vali
+					if regi >= rg.top {
+						rg.top = regi + 1
+					}
+				}
+				return 0
+			}
+			
 			// Lua 5.3: bitwise operations coerce strings to numbers
 			var nm LNumber
 			switch v := unaryv.(type) {
@@ -1169,32 +1195,52 @@ func init() {
 			rhs := L.rkValue(C)
 			ret := false
 
-			if v1, ok1 := lhs.(LNumber); ok1 {
-				if v2, ok2 := rhs.(LNumber); ok2 {
-					// NaN comparisons always return false
-					if math.IsNaN(v1.Float64()) || math.IsNaN(v2.Float64()) {
-						ret = false
+			// Check __le metamethod first (Lua 5.3: works for mixed types)
+			op := L.metaOp2(lhs, rhs, "__le")
+			if fn, ok := op.(*LFunction); ok {
+				L.reg.Push(fn)
+				L.reg.Push(lhs)
+				L.reg.Push(rhs)
+				L.Call(2, 1)
+				result := L.reg.Pop()
+				ret = LVAsBool(result)
+			} else {
+				// Fallback to __lt if __le is not defined (Lua 5.3 behavior)
+				op_lt := L.metaOp2(lhs, rhs, "__lt")
+				if fn_lt, ok_lt := op_lt.(*LFunction); ok_lt {
+					L.reg.Push(fn_lt)
+					L.reg.Push(rhs)
+					L.reg.Push(lhs)
+					L.Call(2, 1)
+					result := L.reg.Pop()
+					ret = !LVAsBool(result)  // a <= b iff not (b < a)
+				} else if v1, ok1 := lhs.(LNumber); ok1 {
+					if v2, ok2 := rhs.(LNumber); ok2 {
+						// NaN comparisons always return false
+						if math.IsNaN(v1.Float64()) || math.IsNaN(v2.Float64()) {
+							ret = false
+						} else {
+							ret = v1.Compare(v2) <= 0
+						}
 					} else {
-						ret = v1.Compare(v2) <= 0
+						L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
 					}
 				} else {
-					L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
-				}
-			} else {
-				if lhs.Type() != rhs.Type() {
-					L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
-				}
-				switch lhs.Type() {
-				case LTString:
-					ret = strCmp(string(lhs.(LString)), string(rhs.(LString))) <= 0
-				default:
-					switch objectRational(L, lhs, rhs, "__le") {
-					case 1:
-						ret = true
-					case 0:
-						ret = false
+					if lhs.Type() != rhs.Type() {
+						L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
+					}
+					switch lhs.Type() {
+					case LTString:
+						ret = strCmp(string(lhs.(LString)), string(rhs.(LString))) <= 0
 					default:
-						ret = !objectRationalWithError(L, rhs, lhs, "__lt")
+						switch objectRational(L, lhs, rhs, "__le") {
+						case 1:
+							ret = true
+						case 0:
+							ret = false
+						default:
+							ret = !objectRationalWithError(L, rhs, lhs, "__lt")
+						}
 					}
 				}
 			}
@@ -2587,6 +2633,17 @@ func stringConcat(L *LState, total, last int) LValue {
 }
 
 func lessThan(L *LState, lhs, rhs LValue) bool {
+	// Check for __lt metamethod first (Lua 5.3: works for mixed types)
+	op := L.metaOp2(lhs, rhs, "__lt")
+	if fn, ok := op.(*LFunction); ok {
+		L.reg.Push(fn)
+		L.reg.Push(lhs)
+		L.reg.Push(rhs)
+		L.Call(2, 1)
+		result := L.reg.Pop()
+		return LVAsBool(result)
+	}
+	
 	// optimization for numbers
 	if v1, ok1 := lhs.(LNumber); ok1 {
 		if v2, ok2 := rhs.(LNumber); ok2 {
@@ -2613,6 +2670,19 @@ func lessThan(L *LState, lhs, rhs LValue) bool {
 }
 
 func equals(L *LState, lhs, rhs LValue, raw bool) bool {
+	// Check __eq metamethod first (Lua 5.3: works for mixed types)
+	if !raw {
+		op := L.metaOp2(lhs, rhs, "__eq")
+		if fn, ok := op.(*LFunction); ok {
+			L.reg.Push(fn)
+			L.reg.Push(lhs)
+			L.reg.Push(rhs)
+			L.Call(2, 1)
+			result := L.reg.Pop()
+			return LVAsBool(result)
+		}
+	}
+	
 	lt := lhs.Type()
 	if lt != rhs.Type() {
 		return false

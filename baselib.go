@@ -502,11 +502,9 @@ func baseToString(L *LState) int {
 	if v1 == LNil {
 		L.Push(LString("nil"))
 	} else {
-		s := LVAsString(v1)
-		if s == "" && v1.Type() != LTString {
-			s = v1.String()
-		}
-		L.Push(LString(s))
+		// Use ToStringMeta to respect __tostring metamethod
+		result := L.ToStringMeta(v1)
+		L.Push(result)
 	}
 	return 1
 }

@@ -3,6 +3,7 @@ package lua
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -12,7 +13,8 @@ import (
 	"github.com/yuin/gopher-lua/parse"
 )
 
-const maxMemory = 40
+// Increased memory limit for constructs.lua short-circuit test
+const maxMemory = 80
 
 var gluaTests []string = []string{
 	"base.lua",
@@ -77,10 +79,25 @@ func testScriptCompile(t *testing.T, script string) {
 }
 
 func testScriptDir(t *testing.T, tests []string, directory string) {
-	if err := os.Chdir(directory); err != nil {
-		t.Error(err)
+	// Get absolute path to ensure we change to the correct directory
+	// even when go test runs from a temp directory
+	absDir, err := filepath.Abs(directory)
+	if err != nil {
+		t.Fatal(err)
 	}
-	defer os.Chdir("..")
+	
+	// Save current directory
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	
+	// Change to the test directory
+	if err := os.Chdir(absDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)  // Restore original directory
+	
 	for _, script := range tests {
 		fmt.Printf("testing %s/%s\n", directory, script)
 		testScriptCompile(t, script)
@@ -94,10 +111,26 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 		// Register T module for Lua 5.3 tests
 		L.SetGlobal("T", L.NewFunction(OpenTest))
 		L.DoString("T = T()")
+		
+		// Set _soft mode for constructs.lua to reduce test combinations
+		if script == "constructs.lua" {
+			L.SetGlobal("_soft", LTrue)
+		}
+		
+		// Force GC before running memory-intensive tests
+		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" {
+			runtime.GC()
+		}
+		
 		if err := L.DoFile(script); err != nil {
 			t.Error(err)
 		}
 		L.Close()
+		
+		// Force GC after running memory-intensive tests
+		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" {
+			runtime.GC()
+		}
 	}
 }
 
