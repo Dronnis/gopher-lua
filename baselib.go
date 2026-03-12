@@ -140,6 +140,17 @@ func baseLoad(L *LState) int {
 	// Lua 5.3 compatibility: load(chunk [, chunkname [, mode [, env]]])
 	// chunk can be a string or a function
 	chunk := L.Get(1)
+	chunkname := L.OptString(2, "<load>")
+	mode := L.OptString(3, "bt")  // Default mode is "bt" (both text and binary)
+
+	// Get environment (4th argument)
+	var env *LTable
+	if L.GetTop() >= 4 {
+		if lv, ok := L.Get(4).(*LTable); ok {
+			env = lv
+		}
+	}
+
 	var reader io.Reader
 	var chunkData string
 
@@ -150,7 +161,6 @@ func baseLoad(L *LState) int {
 		reader = strings.NewReader(chunkData)
 	case *LFunction:
 		// If chunk is a function, read from it
-		chunkname := L.OptString(2, "?")
 		top := L.GetTop()
 		buf := []string{}
 		for {
@@ -174,34 +184,15 @@ func baseLoad(L *LState) int {
 			}
 		}
 		chunkData = strings.Join(buf, "")
-		// Get environment (4th argument)
-		var env *LTable
-		if L.GetTop() >= 4 {
-			if lv, ok := L.Get(4).(*LTable); ok {
-				env = lv
-			}
-		}
-		return loadaux(L, strings.NewReader(chunkData), chunkname, env)
+		reader = strings.NewReader(chunkData)
 	default:
 		L.Push(LNil)
 		L.Push(LString("bad argument #1 to load (function or string expected, got " + chunk.Type().String() + ")"))
 		return 2
 	}
 
-	chunkname := L.OptString(2, "<load>")
-	mode := L.OptString(3, "bt")  // Default mode is "bt" (both text and binary)
-
-	// Get environment (4th argument)
-	var env *LTable
-	if L.GetTop() >= 4 {
-		if lv, ok := L.Get(4).(*LTable); ok {
-			env = lv
-		}
-	}
-
 	// Check mode compatibility (Lua 5.3)
 	// Binary chunks start with the Lua signature: 0x1B 0x4C 0x75 0x61 (ESC Lua)
-	// We need to check the raw bytes, not the string representation
 	isBinary := false
 	if len(chunkData) >= 4 {
 		// Check for Lua binary signature: ESC + "Lua"
@@ -210,6 +201,10 @@ func baseLoad(L *LState) int {
 		}
 	}
 
+	// Mode validation
+	// "b" = only binary chunks
+	// "t" = only text chunks  
+	// "bt" or "tb" = both (default)
 	if mode == "b" && !isBinary {
 		L.Push(LNil)
 		L.Push(LString("attempt to load a text chunk"))

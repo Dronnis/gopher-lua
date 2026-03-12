@@ -158,22 +158,34 @@ func osDiffTime(L *LState) int {
 }
 
 func osExecute(L *LState) int {
+	// Lua 5.3: os.execute() without arguments returns true if shell is available
+	if L.GetTop() == 0 {
+		// On Windows, we assume cmd.exe is always available
+		// On Unix-like systems, /bin/sh is assumed available
+		L.Push(LTrue)
+		return 1
+	}
+	
 	var procAttr os.ProcAttr
 	procAttr.Files = []*os.File{os.Stdin, os.Stdout, os.Stderr}
 	cmd, args := popenArgs(L.CheckString(1))
 	args = append([]string{cmd}, args...)
 	process, err := os.StartProcess(cmd, args, &procAttr)
 	if err != nil {
+		L.Push(LFalse)
+		L.Push(LString("error running command"))
 		L.Push(LNumberInt(1))
-		return 1
+		return 3
 	}
 
 	ps, err := process.Wait()
 	if err != nil || !ps.Success() {
+		L.Push(LFalse)
+		L.Push(LString("command failed"))
 		L.Push(LNumberInt(1))
-		return 1
+		return 3
 	}
-	L.Push(LNumberInt(0))
+	L.Push(LTrue)
 	return 1
 }
 
