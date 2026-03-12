@@ -91,6 +91,9 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 		})
 		L.SetMx(maxMemory)
 		L.OpenLibs()
+		// Register T module for Lua 5.3 tests
+		L.SetGlobal("T", L.NewFunction(OpenTest))
+		L.DoString("T = T()")
 		if err := L.DoFile(script); err != nil {
 			t.Error(err)
 		}
