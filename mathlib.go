@@ -209,8 +209,21 @@ func mathMod(L *LState) int {
 func mathModf(L *LState) int {
 	v := L.CheckNumber(1)
 	f := v.Float64()
-	intPart, fracPart := math.Modf(f)
 	
+	// Handle special cases: NaN and Inf
+	if math.IsNaN(f) {
+		L.Push(LNumberFloat(math.NaN()))
+		L.Push(LNumberFloat(math.NaN()))
+		return 2
+	}
+	if math.IsInf(f, 0) {
+		L.Push(LNumberFloat(f))
+		L.Push(LNumberFloat(0.0))
+		return 2
+	}
+	
+	intPart, fracPart := math.Modf(f)
+
 	// Return integer part as integer if possible
 	var intLNum LNumber
 	if intPart == float64(int64(intPart)) {
@@ -218,7 +231,7 @@ func mathModf(L *LState) int {
 	} else {
 		intLNum = LNumberFloat(intPart)
 	}
-	
+
 	L.Push(intLNum)
 	L.Push(LNumberFloat(fracPart))
 	return 2

@@ -145,6 +145,9 @@ func (tb *LTable) Remove(pos int) LValue {
 // It is recommended to use `RawSetString` or `RawSetInt` for performance
 // if you already know the given LValue is a string or number.
 func (tb *LTable) RawSet(key LValue, value LValue) {
+	// Normalize the key for consistent storage
+	key = normalizeKey(key)
+	
 	switch v := key.(type) {
 	case LNumber:
 		if isArrayKey(v) {
@@ -223,6 +226,9 @@ func (tb *LTable) RawSetString(key string, value LValue) {
 
 // RawSetH sets a given LValue to a given index without the __newindex metamethod.
 func (tb *LTable) RawSetH(key LValue, value LValue) {
+	// Normalize the key for consistent storage
+	key = normalizeKey(key)
+	
 	if s, ok := key.(LString); ok {
 		tb.RawSetString(string(s), value)
 		return
@@ -247,8 +253,29 @@ func (tb *LTable) RawSetH(key LValue, value LValue) {
 	}
 }
 
+// normalizeKey normalizes numeric keys for consistent table access
+// In Lua, -0.0 == 0.0 and 0 == 0.0, they should all be the same table key
+func normalizeKey(key LValue) LValue {
+	if num, ok := key.(LNumber); ok {
+		if num.IsInteger() {
+			if num.Int64() == 0 {
+				return LNumberFloat(0)  // Normalize integer 0 to float 0.0
+			}
+		} else {
+			f := num.Float64()
+			if f == 0 {
+				return LNumberFloat(0)  // Normalize -0.0 to 0.0
+			}
+		}
+	}
+	return key
+}
+
 // RawGet returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGet(key LValue) LValue {
+	// Normalize the key for consistent lookup
+	key = normalizeKey(key)
+	
 	switch v := key.(type) {
 	case LNumber:
 		if isArrayKey(v) {
@@ -293,6 +320,9 @@ func (tb *LTable) RawGetInt(key int) LValue {
 
 // RawGet returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGetH(key LValue) LValue {
+	// Normalize the key for consistent lookup
+	key = normalizeKey(key)
+	
 	if s, sok := key.(LString); sok {
 		if tb.strdict == nil {
 			return LNil

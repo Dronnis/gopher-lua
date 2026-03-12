@@ -13,6 +13,11 @@ func LNumberInt(v int64) LNumber {
 
 // LNumberFloat creates a float LNumber
 func LNumberFloat(v float64) LNumber {
+	// Normalize -0.0 to 0.0 for consistent table key behavior
+	// In Lua, -0.0 == 0.0 and they should be the same table key
+	if v == 0 && math.Signbit(v) {
+		return LNumber{value: luaFloatType(0)}
+	}
 	return LNumber{value: luaFloatType(v)}
 }
 
@@ -269,7 +274,9 @@ func (nm LNumber) Mul(other LNumber) LNumber {
 	if nm.IsInteger() && other.IsInteger() {
 		a, b := nm.Int64(), other.Int64()
 		// Lua 5.3: wrap around on overflow (two's complement arithmetic)
-		return LNumberInt(a * b)
+		// Use uint64 for proper wrap-around behavior
+		result := uint64(a) * uint64(b)
+		return LNumberInt(int64(result))
 	}
 	return LNumberFloat(nm.Float64() * other.Float64())
 }
