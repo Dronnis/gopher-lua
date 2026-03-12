@@ -1990,7 +1990,7 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}
 	fn := newLFunctionL(proto, ls.currentEnv(), int(proto.NumUpvalues))
-	// Initialize _ENV upvalue for Lua 5.3
+	// Initialize _ENV upvalue(s) for Lua 5.3
 	// In Lua 5.3, _ENV is always the first upvalue for main chunks
 	// Use ls.G.Global to match where modules are registered
 	for i := 0; i < len(fn.Upvalues) && i < len(proto.DbgUpvalues); i++ {

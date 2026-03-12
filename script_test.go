@@ -28,8 +28,8 @@ var gluaTests []string = []string{
 }
 
 var luaTests []string = []string{
-	"utf8.lua",
-/*	"all.lua",
+	
+	"all.lua",
 	"attrib.lua",
 	"calls.lua",
 	"closure.lua",
@@ -51,7 +51,8 @@ var luaTests []string = []string{
 	"heavy.lua",
 	"tpack.lua",
 	"goto.lua",
-	*/
+	"utf8.lua",
+	
 }
 
 func testScriptCompile(t *testing.T, script string) {

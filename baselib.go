@@ -16,10 +16,15 @@ func OpenBase(L *LState) int {
 	L.SetGlobal("_G", global)
 	L.SetGlobal("_VERSION", LString(LuaVersion))
 	L.SetGlobal("_GOPHER_LUA_VERSION", LString(PackageName+" "+PackageVersion))
-	basemod := L.RegisterModule("_G", baseFuncs)
+	// Lua 5.3: _ENV is the environment table for global access
+	// Set _ENV as a global variable that points to the current environment
+	L.SetGlobal("_ENV", global)
+	// Register base functions in the global table (_ENV)
+	// Use SetFuncs to add functions directly to the global table
+	L.SetFuncs(global, baseFuncs)
 	global.RawSetString("ipairs", L.NewClosure(baseIpairs, L.NewFunction(ipairsaux)))
 	global.RawSetString("pairs", L.NewClosure(basePairs, L.NewFunction(pairsaux)))
-	L.Push(basemod)
+	L.Push(global)
 	return 1
 }
 

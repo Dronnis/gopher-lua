@@ -210,6 +210,20 @@ func init() {
 			// +inline-call reg.Set RA v
 			return 0
 		},
+		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_LOADKX
+			reg := L.reg
+			cf := L.currentFrame
+			lbase := cf.LocalBase
+			A := int(inst>>18) & 0xff //GETA
+			RA := lbase + A
+			// Индекс константы берётся из следующей инструкции EXTRAARG
+			nextInst := cf.Fn.Proto.Code[cf.Pc]
+			cf.Pc++
+			Ax := int(nextInst & 0x3ffffff)
+			v := cf.Fn.Proto.Constants[Ax]
+			// +inline-call reg.Set RA v
+			return 0
+		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_LOADBOOL
 			reg := L.reg
 			cf := L.currentFrame
@@ -251,15 +265,27 @@ func init() {
 			// +inline-call reg.Set RA v
 			return 0
 		},
-		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_GETGLOBAL
+		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_GETTABUP
 			reg := L.reg
 			cf := L.currentFrame
 			lbase := cf.LocalBase
 			A := int(inst>>18) & 0xff //GETA
 			RA := lbase + A
-			Bx := int(inst & 0x3ffff) //GETBX
-			//reg.Set(RA, L.getField(cf.Fn.Env, cf.Fn.Proto.Constants[Bx]))
-			v := L.getFieldString(cf.Fn.Env, cf.Fn.Proto.stringConstants[Bx])
+			B := int(inst & 0x1ff)    //GETB
+			C := int(inst>>9) & 0x1ff //GETC
+			upvalue := cf.Fn.Upvalues[B]
+			// Lua 5.3: GETTABUP uses RK(C) which can be register or constant
+			// For string constants, use getFieldString for efficiency
+			var v LValue
+			if opIsK(C) {
+				idx := opIndexK(C)
+				if idx < len(cf.Fn.Proto.stringConstants) && cf.Fn.Proto.stringConstants[idx] != "" {
+					v = L.getFieldString(upvalue.Value(), cf.Fn.Proto.stringConstants[idx])
+					// +inline-call reg.Set RA v
+					return 0
+				}
+			}
+			v = L.getField(upvalue.Value(), L.rkValue(C))
 			// +inline-call reg.Set RA v
 			return 0
 		},
@@ -293,9 +319,10 @@ func init() {
 			lbase := cf.LocalBase
 			A := int(inst>>18) & 0xff //GETA
 			RA := lbase + A
-			Bx := int(inst & 0x3ffff) //GETBX
-			//L.setField(cf.Fn.Env, cf.Fn.Proto.Constants[Bx], reg.Get(RA))
-			L.setFieldString(cf.Fn.Env, cf.Fn.Proto.stringConstants[Bx], reg.Get(RA))
+			B := int(inst & 0x1ff)    //GETB
+			C := int(inst>>9) & 0x1ff //GETC
+			upvalue := cf.Fn.Upvalues[A]
+			L.setField(upvalue.Value(), L.rkValue(B), L.rkValue(C))
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_SETUPVAL
@@ -728,6 +755,17 @@ func init() {
 			cf.Pc += Sbx
 			return 0
 		},
+		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_TFORCALL
+			reg := L.reg
+			cf := L.currentFrame
+			lbase := cf.LocalBase
+			A := int(inst>>18) & 0xff //GETA
+			C := int(inst>>9) & 0x1ff //GETC
+			// R(A+3) ... R(A+2+C) := R(A)(R(A+1) R(A+2))
+			reg.SetTop(lbase + A + 3 + C)
+			L.callR(2, C, lbase+A+3)
+			return 0
+		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_TFORLOOP
 			reg := L.reg
 			cf := L.currentFrame
@@ -820,6 +858,12 @@ func init() {
 				nwant = nvarargs
 			}
 			// +inline-call reg.CopyRange RA cf.Base+nparams+1 cf.LocalBase nwant
+			return 0
+		},
+		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_EXTRAARG
+			// EXTRAARG используется только для передачи дополнительного аргумента
+			// для предыдущей инструкции (обычно LOADKX). Эта инструкция
+			// пропускается при выполнении.
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_NOP

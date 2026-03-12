@@ -829,7 +829,12 @@ func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 				reg -= 1
 			}
 		case ecGlobal:
-			code.AddABx(OP_SETGLOBAL, reg, context.ConstIndex(LString(ex.(*ast.IdentExpr).Value)), sline(ex))
+			// Lua 5.3: set global via _ENV[key] = value
+			// SETTABUP _ENV[key] = value (key is RK-encoded constant string)
+			// A is upvalue index, not register!
+			envupvalue := context.getEnvUpvalue()
+			keyindex := context.ConstIndex(LString(ex.(*ast.IdentExpr).Value))
+			code.AddABC(OP_SETTABUP, envupvalue, opRkAsk(keyindex), reg, sline(ex))
 			reg -= 1
 		case ecUpvalue:
 			code.AddABC(OP_SETUPVAL, reg, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
@@ -1223,7 +1228,12 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 		} else {
 			switch refType {
 			case ecGlobal:
-				code.AddABx(OP_GETGLOBAL, sreg, context.ConstIndex(LString(ex.Value)), sline(ex))
+				// Lua 5.3: access global via _ENV[key]
+				// GETTABUP sreg = _ENV[key] (key is RK-encoded constant string)
+				// B is upvalue index, not register!
+				envupvalue := context.getEnvUpvalue()
+				keyindex := context.ConstIndex(LString(ex.Value))
+				code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
 			case ecUpvalue:
 				code.AddABC(OP_GETUPVAL, sreg, context.Upvalues.RegisterUnique(ex.Value), 0, sline(ex))
 			case ecLocal:
@@ -1853,10 +1863,9 @@ func getIdentRefType(context *funcContext, current *funcContext, expr *ast.Ident
 		// _ENV itself follows normal scoping rules
 		if expr.Value == "_ENV" {
 			// _ENV not found in any scope - this shouldn't happen in normal Lua 5.3
-			// but we'll treat it as a global access via _ENV (which will be nil/empty)
 			return ecEnv
 		}
-		return ecEnv // Use _ENV for global access
+		return ecGlobal // Global access via _ENV
 	} else if current.FindLocalVar(expr.Value) > -1 {
 		if current == context {
 			return ecLocal
@@ -1865,7 +1874,6 @@ func getIdentRefType(context *funcContext, current *funcContext, expr *ast.Ident
 	}
 	// Check if _ENV is an upvalue (for direct _ENV access)
 	if expr.Value == "_ENV" {
-		// _ENV should be the first upvalue in Lua 5.3
 		return ecUpvalue
 	}
 	return getIdentRefType(context, current.Parent, expr)
@@ -1900,7 +1908,7 @@ func patchCode(context *funcContext) { // {{{
 			pc += int(context.Proto.FunctionPrototypes[opGetArgBx(inst)].NumUpvalues)
 			moven = 0
 			continue
-		case OP_SETGLOBAL, OP_SETUPVAL, OP_EQ, OP_LT, OP_LE, OP_TEST,
+		case OP_SETTABUP, OP_SETUPVAL, OP_EQ, OP_LT, OP_LE, OP_TEST,
 			OP_TAILCALL, OP_RETURN, OP_FORPREP, OP_FORLOOP, OP_TFORLOOP,
 			OP_SETLIST, OP_CLOSE:
 			/* nothing to do */
@@ -1981,6 +1989,9 @@ func Compile(chunk []ast.Stmt, name string) (proto *FunctionProto, err error) { 
 		funcexpr.SetLastLine(eline(chunk[len(chunk)-1]) + 1)
 	}
 	context := newFuncContext(name, nil)
+	// Lua 5.3: _ENV is always the first upvalue for the main chunk
+	// This ensures global variables can be accessed via _ENV
+	context.getEnvUpvalue()
 	compileFunctionExpr(context, funcexpr, ecnone(0))
 	proto = context.Proto
 	return
