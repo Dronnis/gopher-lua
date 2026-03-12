@@ -285,15 +285,9 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 			val, _ := strconv.ParseInt(hex, 16, 32)
 			buf.WriteByte(byte(val))
 		} else {
-			// Invalid hex escape - treat as literal 'x'
-			buf.WriteByte('x')
-			if h1 != EOF {
-				// Put back the characters
-				sc.reader.UnreadByte()
-				if h2 != EOF {
-					sc.reader.UnreadByte()
-				}
-			}
+			// Invalid hex escape - return error with proper format
+			// Lua expects "near '\x'" format
+			return sc.Error("\\x", "invalid hex escape sequence")
 		}
 	case 'u':
 		// \u{XXX} Unicode escape (Lua 5.3 feature)
@@ -307,9 +301,12 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 				} else if ch == '}' {
 					sc.Next()  // skip '}'
 					break
+				} else if ch == EOF {
+					// Unexpected EOF inside \u{}
+					return sc.Error("\\u", "unfinished \\u{} escape sequence")
 				} else {
 					// Invalid Unicode escape
-					break
+					return sc.Error("\\u", "invalid unicode escape sequence")
 				}
 			}
 			if len(hex) > 0 {
@@ -331,12 +328,12 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 					buf.WriteByte(0x80 | byte(val&0x3F))
 				}
 			} else {
-				// Invalid - treat as literal 'u'
-				buf.WriteByte('u')
+				// Invalid Unicode escape - return error
+				return sc.Error("\\u", "invalid unicode escape sequence")
 			}
 		} else {
-			// Not a Unicode escape - treat as literal 'u'
-			buf.WriteByte('u')
+			// Not a Unicode escape - return error
+			return sc.Error("\\u", "invalid unicode escape sequence")
 		}
 	default:
 		if '0' <= ch && ch <= '9' {
