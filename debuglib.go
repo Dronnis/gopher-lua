@@ -220,12 +220,20 @@ func debugSetUpvalue(L *LState) int {
 
 // debug.getuservalue(udata)
 // Returns the user value associated with the userdata.
-// In Lua 5.3+, this returns the environment table or nil.
+// In Lua 5.3+, this returns any value (not just tables).
 func debugGetUserValue(L *LState) int {
 	ud := L.CheckUserData(1)
-	
+
 	// In GopherLua, LUserData has an Env field that serves as uservalue
 	if ud.Env != nil {
+		// Check if this is a wrapper table for a non-table value
+		// Wrapper tables have exactly one element at index 1 and no metatable
+		if ud.Env.Len() == 1 && ud.Env.Metatable == nil {
+			val := ud.Env.RawGetInt(1)
+			// Return the wrapped value (could be any type including nil)
+			L.Push(val)
+			return 1
+		}
 		L.Push(ud.Env)
 	} else {
 		L.Push(LNil)
@@ -233,24 +241,27 @@ func debugGetUserValue(L *LState) int {
 	return 1
 }
 
-// debug.setuservalue(value, udata)
+// debug.setuservalue(udata, value)
 // Sets the user value associated with the userdata.
+// In Lua 5.3+, the value can be any Lua value (not just tables).
 // Returns the userdata.
 func debugSetUserValue(L *LState) int {
-	value := L.CheckAny(1)
-	ud := L.CheckUserData(2)
-	
-	// The value must be a table or nil (Lua 5.3 compatibility)
-	if value != LNil {
-		if _, ok := value.(*LTable); !ok {
-			L.ArgError(1, "table expected or nil")
-			return 0
-		}
+	ud := L.CheckUserData(1)
+	value := L.CheckAny(2)
+
+	// In Lua 5.3+, uservalue can be any value (not just table or nil)
+	// Store the value directly in the Env field
+	// For non-table values, we wrap them in a table with a special key
+	if tb, ok := value.(*LTable); ok {
+		ud.Env = tb
+	} else {
+		// For non-table values, create a wrapper table
+		// This maintains compatibility with existing code that expects Env to be a table
+		wrapper := L.NewTable()
+		wrapper.RawSetInt(1, value)  // Store value at index 1
+		ud.Env = wrapper
 	}
-	
-	// Set the Env field of the userdata
-	ud.Env, _ = value.(*LTable)
-	
+
 	// Return the userdata
 	L.Push(ud)
 	return 1

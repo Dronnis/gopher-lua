@@ -2671,10 +2671,46 @@ func lessThan(L *LState, lhs, rhs LValue) bool {
 
 func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 	// Check __eq metamethod first (Lua 5.3: works for mixed types)
+	// But only if at least one operand has a metatable
 	if !raw {
-		op := L.metaOp2(lhs, rhs, "__eq")
-		if fn, ok := op.(*LFunction); ok {
-			L.reg.Push(fn)
+		var eqFn *LFunction
+		
+		// For userdata, check metatable directly
+		// Lua 5.3: if both have __eq, use the first one
+		if ud1, ok1 := lhs.(*LUserData); ok1 {
+			if mt, ok := ud1.Metatable.(*LTable); ok {
+				op := mt.RawGetString("__eq")
+				if fn, ok := op.(*LFunction); ok {
+					eqFn = fn
+				}
+			}
+		}
+		// If lhs doesn't have __eq, check rhs
+		if eqFn == nil {
+			if ud2, ok2 := rhs.(*LUserData); ok2 {
+				if mt, ok := ud2.Metatable.(*LTable); ok {
+					op := mt.RawGetString("__eq")
+					if fn, ok := op.(*LFunction); ok {
+						eqFn = fn
+					}
+				}
+			}
+		}
+		// For tables, use metaOp2 (checks both operands)
+		if eqFn == nil {
+			if _, ok1 := lhs.(*LTable); ok1 {
+				if _, ok2 := rhs.(*LTable); ok2 {
+					op := L.metaOp2(lhs, rhs, "__eq")
+					if fn, ok := op.(*LFunction); ok {
+						eqFn = fn
+					}
+				}
+			}
+		}
+		
+		// Call the __eq metamethod if found
+		if eqFn != nil {
+			L.reg.Push(eqFn)
 			L.reg.Push(lhs)
 			L.reg.Push(rhs)
 			L.Call(2, 1)
@@ -2682,7 +2718,7 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 			return LVAsBool(result)
 		}
 	}
-	
+
 	lt := lhs.Type()
 	if lt != rhs.Type() {
 		return false

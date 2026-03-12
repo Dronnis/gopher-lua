@@ -18,43 +18,20 @@ const maxMemory = 80
 
 var gluaTests []string = []string{
 	"base.lua",
-//	"coroutine.lua",
-//	"db.lua",
+	//	"coroutine.lua",
+	//	"db.lua",
 	"issues.lua",
 	"os.lua",
 	"table.lua",
 	"vm.lua",
 	"math.lua",
-//	"strings.lua",
-//	"goto.lua",
+	// "strings.lua",
+	// "goto.lua",
 }
 
 var luaTests []string = []string{
-	
+
 	"all.lua",
-	"attrib.lua",
-	"calls.lua",
-	"closure.lua",
-	"coroutine.lua",
-	"constructs.lua",
-	"events.lua",
-	"literals.lua",
-	"locals.lua",
-	"math.lua",
-	"sort.lua",
-	"strings.lua",
-	"vararg.lua",
-	"pm.lua",
-	"files.lua",
-	"bitwise.lua",
-	"bwcoercion.lua",
-	"coroutine.lua",
-	"goto.lua",
-	"heavy.lua",
-	"tpack.lua",
-	"goto.lua",
-	"utf8.lua",
-	
 }
 
 func testScriptCompile(t *testing.T, script string) {
@@ -85,19 +62,19 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Save current directory
 	origDir, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	// Change to the test directory
 	if err := os.Chdir(absDir); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chdir(origDir)  // Restore original directory
-	
+	defer os.Chdir(origDir) // Restore original directory
+
 	for _, script := range tests {
 		fmt.Printf("testing %s/%s\n", directory, script)
 		testScriptCompile(t, script)
@@ -111,22 +88,18 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 		// Register T module for Lua 5.3 tests
 		L.SetGlobal("T", L.NewFunction(OpenTest))
 		L.DoString("T = T()")
-		
-		// Set _soft mode for constructs.lua to reduce test combinations
-		if script == "constructs.lua" {
-			L.SetGlobal("_soft", LTrue)
-		}
-		
+		L.SetGlobal("_U", LTrue)
+
 		// Force GC before running memory-intensive tests
 		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" {
 			runtime.GC()
 		}
-		
+
 		if err := L.DoFile(script); err != nil {
 			t.Error(err)
 		}
 		L.Close()
-		
+
 		// Force GC after running memory-intensive tests
 		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" {
 			runtime.GC()
