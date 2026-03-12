@@ -13,8 +13,8 @@ import (
 )
 
 const EOF = -1
-const whitespace1 = 1<<'\t' | 1<<' '
-const whitespace2 = 1<<'\t' | 1<<'\n' | 1<<'\r' | 1<<' '
+const whitespace1 = 1<<'\t' | 1<<'\n' | 1<<'\f' | 1<<'\r' | 1<<'\v' | 1<<' '
+const whitespace2 = 1<<'\t' | 1<<'\n' | 1<<'\f' | 1<<'\r' | 1<<'\v' | 1<<' '
 
 type Error struct {
 	Pos     ast.Position
@@ -276,6 +276,68 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 	case '\r':
 		buf.WriteByte('\n')
 		sc.Newline('\r')
+	case 'x':
+		// \xXX hex escape (Lua 5.3 feature)
+		h1 := sc.Next()
+		h2 := sc.Next()
+		if isHex(h1) && isHex(h2) {
+			hex := string([]byte{byte(h1), byte(h2)})
+			val, _ := strconv.ParseInt(hex, 16, 32)
+			buf.WriteByte(byte(val))
+		} else {
+			// Invalid hex escape - treat as literal 'x'
+			buf.WriteByte('x')
+			if h1 != EOF {
+				// Put back the characters
+				sc.reader.UnreadByte()
+				if h2 != EOF {
+					sc.reader.UnreadByte()
+				}
+			}
+		}
+	case 'u':
+		// \u{XXX} Unicode escape (Lua 5.3 feature)
+		if sc.Peek() == '{' {
+			sc.Next()  // skip '{'
+			hex := ""
+			for {
+				ch = sc.Peek()
+				if isHex(ch) {
+					hex += string([]byte{byte(sc.Next())})
+				} else if ch == '}' {
+					sc.Next()  // skip '}'
+					break
+				} else {
+					// Invalid Unicode escape
+					break
+				}
+			}
+			if len(hex) > 0 {
+				val, _ := strconv.ParseInt(hex, 16, 32)
+				// Encode as UTF-8
+				if val <= 0x7F {
+					buf.WriteByte(byte(val))
+				} else if val <= 0x7FF {
+					buf.WriteByte(0xC0 | byte(val>>6))
+					buf.WriteByte(0x80 | byte(val&0x3F))
+				} else if val <= 0xFFFF {
+					buf.WriteByte(0xE0 | byte(val>>12))
+					buf.WriteByte(0x80 | byte((val>>6)&0x3F))
+					buf.WriteByte(0x80 | byte(val&0x3F))
+				} else if val <= 0x10FFFF {
+					buf.WriteByte(0xF0 | byte(val>>18))
+					buf.WriteByte(0x80 | byte((val>>12)&0x3F))
+					buf.WriteByte(0x80 | byte((val>>6)&0x3F))
+					buf.WriteByte(0x80 | byte(val&0x3F))
+				}
+			} else {
+				// Invalid - treat as literal 'u'
+				buf.WriteByte('u')
+			}
+		} else {
+			// Not a Unicode escape - treat as literal 'u'
+			buf.WriteByte('u')
+		}
 	default:
 		if '0' <= ch && ch <= '9' {
 			bytes := []byte{byte(ch)}
