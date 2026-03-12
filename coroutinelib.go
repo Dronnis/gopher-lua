@@ -8,12 +8,13 @@ func OpenCoroutine(L *LState) int {
 }
 
 var coFuncs = map[string]LGFunction{
-	"create":  coCreate,
-	"yield":   coYield,
-	"resume":  coResume,
-	"running": coRunning,
-	"status":  coStatus,
-	"wrap":    coWrap,
+	"create":      coCreate,
+	"isyieldable": coIsYieldable,
+	"resume":      coResume,
+	"running":     coRunning,
+	"status":      coStatus,
+	"wrap":        coWrap,
+	"yield":       coYield,
 }
 
 func coCreate(L *LState) int {
@@ -32,6 +33,42 @@ func coCreate(L *LState) int {
 		TailCall:   0,
 	})
 	L.Push(newthread)
+	return 1
+}
+
+// coroutine.isyieldable([thread])
+// Returns true if the given thread can yield.
+// In Lua 5.3+, a thread can yield if it's not the main thread and not dead.
+func coIsYieldable(L *LState) int {
+	var th *LState
+	if L.GetTop() == 0 {
+		// No argument: check current thread
+		th = L
+	} else {
+		th = L.CheckThread(1)
+	}
+
+	// The main thread cannot yield
+	if th == L.G.MainThread {
+		L.Push(LFalse)
+		return 1
+	}
+
+	// Dead threads cannot yield
+	if th.Dead {
+		L.Push(LFalse)
+		return 1
+	}
+
+	// A running thread (current thread) cannot yield from within itself
+	// (would need to check if we're in a resumable context)
+	if th == L.G.CurrentThread {
+		L.Push(LFalse)
+		return 1
+	}
+
+	// Other threads (suspended coroutines) can yield
+	L.Push(LTrue)
 	return 1
 }
 
