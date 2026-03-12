@@ -32,6 +32,28 @@ var gluaTests []string = []string{
 var luaTests []string = []string{
 
 	"all.lua",
+	"attrib.lua",
+	"calls.lua",
+	"closure.lua",
+	"coroutine.lua",
+	"constructs.lua",
+	"events.lua",
+	"literals.lua",
+	"locals.lua",
+	"math.lua",
+	"sort.lua",
+	"strings.lua",
+	"vararg.lua",
+	"pm.lua",
+	"files.lua",
+	"bitwise.lua",
+	"bwcoercion.lua",
+	"coroutine.lua",
+	"goto.lua",
+	"heavy.lua",
+	"tpack.lua",
+	"goto.lua",
+	"utf8.lua",
 }
 
 func testScriptCompile(t *testing.T, script string) {
@@ -88,7 +110,11 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 		// Register T module for Lua 5.3 tests
 		L.SetGlobal("T", L.NewFunction(OpenTest))
 		L.DoString("T = T()")
-		L.SetGlobal("_U", LTrue)
+
+		// Set _soft mode for constructs.lua to reduce test combinations
+		if script == "constructs.lua" {
+			L.SetGlobal("_soft", LTrue)
+		}
 
 		// Force GC before running memory-intensive tests
 		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" {

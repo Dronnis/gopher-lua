@@ -67,9 +67,111 @@ func baseAssert(L *LState) int {
 	return L.GetTop()
 }
 
+// GCState stores the state of the garbage collector
+type GCState struct {
+	Stop        bool  // true if GC is stopped
+	Pause       int   // pause multiplier (default 200)
+	StepMul     int   // step multiplier (default 200)
+	TotalBytes  int64 // total allocated bytes
+	MaxBytes    int64 // maximum bytes before next GC
+}
+
+// Global GC state
+var globalGCState = &GCState{
+	Stop:      false,
+	Pause:     200,
+	StepMul:   200,
+	TotalBytes: 0,
+	MaxBytes:  0,
+}
+
 func baseCollectGarbage(L *LState) int {
-	runtime.GC()
-	return 0
+	option := L.OptString(1, "collect")
+	
+	switch option {
+	case "collect":
+		// Perform a full garbage collection cycle
+		if !globalGCState.Stop {
+			runtime.GC()
+		}
+		// Return 0 (no return value in Lua 5.3 for "collect")
+		return 0
+		
+	case "stop":
+		// Stop the garbage collector
+		globalGCState.Stop = true
+		return 0
+		
+	case "restart":
+		// Restart the garbage collector
+		globalGCState.Stop = false
+		return 0
+		
+	case "count":
+		// Return total memory in KB
+		var memStats runtime.MemStats
+		runtime.ReadMemStats(&memStats)
+		// Return two values: total KB and bytes remainder
+		totalKB := memStats.Alloc / 1024
+		bytesRem := memStats.Alloc % 1024
+		L.Push(LNumberFloat(float64(totalKB) + float64(bytesRem)/1024.0))
+		return 1
+		
+	case "step":
+		// Perform a garbage collection step
+		stepSize := L.OptInt(2, 0)
+		if !globalGCState.Stop {
+			if stepSize > 0 {
+				// Perform multiple small GC steps
+				for i := 0; i < stepSize; i++ {
+					runtime.GC()
+				}
+			} else {
+				runtime.GC()
+			}
+		}
+		// Return true if the step finished a collection cycle
+		// (we always return true for simplicity)
+		L.Push(LTrue)
+		return 1
+		
+	case "setpause":
+		// Set the pause multiplier
+		newPause := L.CheckInt(2)
+		oldPause := globalGCState.Pause
+		globalGCState.Pause = newPause
+		L.Push(LNumberInt(int64(oldPause)))
+		return 1
+		
+	case "setstepmul":
+		// Set the step multiplier
+		newStepMul := L.CheckInt(2)
+		oldStepMul := globalGCState.StepMul
+		globalGCState.StepMul = newStepMul
+		L.Push(LNumberInt(int64(oldStepMul)))
+		return 1
+		
+	case "isrunning":
+		// Return whether the collector is running
+		L.Push(LBool(!globalGCState.Stop))
+		return 1
+		
+	case "setmajorinc":
+		// Lua 5.3 option - set major increment
+		// We don't implement incremental GC, so just return 0
+		L.Push(LNumberInt(0))
+		return 1
+		
+	case "getmajorinc":
+		// Lua 5.3 option - get major increment
+		// Return default value
+		L.Push(LNumberInt(0))
+		return 1
+		
+	default:
+		L.ArgError(1, "collectgarbage: invalid option '"+option+"'")
+		return 0
+	}
 }
 
 func baseDoFile(L *LState) int {
