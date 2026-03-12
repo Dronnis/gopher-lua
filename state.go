@@ -5,7 +5,9 @@ package lua
 ////////////////////////////////////////////////////////
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -1991,7 +1993,34 @@ func (ls *LState) Register(name string, fn LGFunction) {
 /* load and function call operations {{{ */
 
 func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
-	chunk, err := parse.Parse(reader, name)
+	// Read all data to detect binary chunk
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, newApiErrorE(ApiErrorSyntax, err)
+	}
+
+	// Check for Lua 5.3 binary chunk signature
+	if len(data) >= 4 && data[0] == 0x1B && data[1] == 'L' && data[2] == 'u' && data[3] == 'a' {
+		// Binary chunk - deserialize
+		proto, err := undumpProto(ls, data)
+		if err != nil {
+			return nil, newApiErrorE(ApiErrorSyntax, errors.New(err.Error()))
+		}
+		fn := newLFunctionL(proto, ls.currentEnv(), int(proto.NumUpvalues))
+		// Initialize _ENV upvalue
+		for i := 0; i < len(fn.Upvalues) && i < len(proto.DbgUpvalues); i++ {
+			if proto.DbgUpvalues[i] == "_ENV" {
+				uv := &Upvalue{}
+				uv.closed = true
+				uv.value = ls.G.Global
+				fn.Upvalues[i] = uv
+			}
+		}
+		return fn, nil
+	}
+
+	// Text chunk - parse and compile
+	chunk, err := parse.Parse(bytes.NewReader(data), name)
 	if err != nil {
 		return nil, newApiErrorE(ApiErrorSyntax, err)
 	}

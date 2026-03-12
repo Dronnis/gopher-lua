@@ -87,8 +87,19 @@ func strChar(L *LState) int {
 }
 
 func strDump(L *LState) int {
-	L.RaiseError("GopherLua does not support the string.dump")
-	return 0
+	fn := L.CheckFunction(1)
+	strip := L.OptBool(2, false)
+
+	if fn.IsG {
+		L.Push(LNil)
+		L.Push(LString("unable to dump Go functions"))
+		return 2
+	}
+
+	// Serialize the function prototype
+	data := dumpProto(fn.Proto, strip)
+	L.Push(LString(string(data)))
+	return 1
 }
 
 func strFind(L *LState) int {
