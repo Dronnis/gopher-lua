@@ -2,6 +2,7 @@ package lua
 
 import (
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -83,6 +84,7 @@ func OpenDebug(L *LState) int {
 }
 
 var debugFuncs = map[string]LGFunction{
+	"debug":         debugDebug,
 	"gethook":       debugGetHook,
 	"getinfo":       debugGetInfo,
 	"getlocal":      debugGetLocal,
@@ -274,6 +276,99 @@ func debugTraceback(L *LState) int {
 	}
 	L.Push(LString(traceback))
 	return 1
+}
+
+// debug.debug([prompt[, env]])
+// Enters an interactive debug console/REPL.
+// In GopherLua, this is a simplified implementation that executes code from stdin.
+func debugDebug(L *LState) int {
+	prompt := L.OptString(1, "debug> ")
+	
+	// Get environment table (optional second argument)
+	var env *LTable
+	if L.GetTop() >= 2 {
+		if tb, ok := L.Get(2).(*LTable); ok {
+			env = tb
+		} else {
+			L.ArgError(2, "table expected")
+			return 0
+		}
+	}
+
+	// Save original environment
+	originalEnv := L.Env
+	if env != nil {
+		L.Env = env
+	}
+
+	// Print welcome message
+	fmt.Fprintf(os.Stdout, "Lua 5.3 Debug Console (GopherLua)\n")
+	fmt.Fprintf(os.Stdout, "Type 'exit' or 'quit' to leave, 'help' for help.\n\n")
+
+	// Interactive REPL loop
+	for {
+		// Print prompt
+		fmt.Fprintf(os.Stdout, "%s", prompt)
+
+		// Read line from stdin
+		var line string
+		_, err := fmt.Scanln(&line)
+		if err != nil {
+			fmt.Fprintf(os.Stdout, "\n")
+			break
+		}
+
+		// Check for exit commands
+		line = strings.TrimSpace(line)
+		if line == "exit" || line == "quit" || line == "cont" {
+			break
+		}
+
+		// Check for help command
+		if line == "help" {
+			fmt.Fprintf(os.Stdout, "Debug Console Commands:\n")
+			fmt.Fprintf(os.Stdout, "  exit, quit, cont - Exit debug console\n")
+			fmt.Fprintf(os.Stdout, "  help             - Show this help\n")
+			fmt.Fprintf(os.Stdout, "  <lua code>       - Execute Lua code\n")
+			fmt.Fprintf(os.Stdout, "  = <expr>         - Evaluate and print expression\n")
+			fmt.Fprintf(os.Stdout, "\n")
+			continue
+		}
+
+		// Check for print shortcut (= expr)
+		if strings.HasPrefix(line, "=") {
+			line = "return " + strings.TrimPrefix(line, "=")
+		}
+
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+
+		// Execute the code
+		if err := L.DoString(line); err != nil {
+			fmt.Fprintf(os.Stdout, "Error: %v\n", err)
+		} else {
+			// Print any return values
+			top := L.GetTop()
+			if top > 0 {
+				for i := 1; i <= top; i++ {
+					val := L.Get(i)
+					if i > 1 {
+						fmt.Fprintf(os.Stdout, "\t")
+					}
+					fmt.Fprintf(os.Stdout, "%v", val)
+				}
+				fmt.Fprintf(os.Stdout, "\n")
+				L.SetTop(0)
+			}
+		}
+	}
+
+	// Restore original environment
+	L.Env = originalEnv
+
+	return 0
 }
 
 // debug.sethook(hook, mask[, count])
