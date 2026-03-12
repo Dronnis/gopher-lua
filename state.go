@@ -662,6 +662,10 @@ func panicWithoutTraceback(L *LState) {
 }
 
 func newLState(options Options) *LState {
+	// Forward declaration for debug hooks
+	type dummyHookFunc func(*LState, int, int)
+	_ = (*dummyHookFunc)(nil)
+
 	al := newAllocator(32)
 	ls := &LState{
 		G:       newGlobal(),
@@ -1140,6 +1144,12 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 	if ls.stack.IsFull() {
 		ls.RaiseError("stack overflow")
 	}
+	
+	// Check for call hook (before pushing the frame)
+	if ls.G.Hook != nil && (ls.G.HookMask&HookMaskCall) != 0 && !ls.G.InHook {
+		callHook(ls, HookEventCall, -1)
+	}
+	
 	ls.stack.Push(cf)
 	newcf := ls.stack.Last()
 	// this section is inlined by go-inline

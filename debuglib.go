@@ -5,6 +5,77 @@ import (
 	"strings"
 )
 
+// Debug hook constants (Lua 5.3 compatible)
+const (
+	HookMaskCall    = 1 << iota // 'c'
+	HookMaskReturn              // 'r'
+	HookMaskLine                // 'l'
+	HookMaskCount               // 'n'
+)
+
+// HookEvent represents the type of hook event
+type HookEvent int
+
+const (
+	HookEventCall      HookEvent = iota // "call"
+	HookEventReturn                      // "return"
+	HookEventLine                        // "line"
+	HookEventCount                       // "count"
+	HookEventTailReturn                  // "tail return"
+)
+
+// DebugHook represents a debug hook
+type DebugHook struct {
+	Function *LFunction
+	Mask     int
+	Count    int
+}
+
+// callHook calls the debug hook with the given event
+func callHook(L *LState, event HookEvent, line int) {
+	if L.G.Hook == nil {
+		return
+	}
+
+	// Prevent recursive hook calls
+	if L.G.InHook {
+		return
+	}
+	L.G.InHook = true
+	defer func() { L.G.InHook = false }()
+
+	// Push hook function
+	L.Push(L.G.Hook)
+
+	// Push event string
+	var eventStr string
+	switch event {
+	case HookEventCall:
+		eventStr = "call"
+	case HookEventReturn:
+		eventStr = "return"
+	case HookEventLine:
+		eventStr = "line"
+	case HookEventCount:
+		eventStr = "count"
+	case HookEventTailReturn:
+		eventStr = "tail return"
+	}
+	L.Push(LString(eventStr))
+
+	// Push line number (or nil)
+	if line > 0 {
+		L.Push(LNumberInt(int64(line)))
+	} else {
+		L.Push(LNil)
+	}
+
+	// Call hook (no return values expected)
+	if err := L.PCall(2, 0, nil); err != nil {
+		// Ignore hook errors
+	}
+}
+
 func OpenDebug(L *LState) int {
 	dbgmod := L.RegisterModule(DebugLibName, debugFuncs)
 	L.Push(dbgmod)
@@ -12,14 +83,19 @@ func OpenDebug(L *LState) int {
 }
 
 var debugFuncs = map[string]LGFunction{
+	"gethook":      debugGetHook,
 	"getinfo":      debugGetInfo,
 	"getlocal":     debugGetLocal,
 	"getmetatable": debugGetMetatable,
+	"getregistry":  debugGetRegistry,
 	"getupvalue":   debugGetUpvalue,
+	"sethook":      debugSetHook,
 	"setlocal":     debugSetLocal,
 	"setmetatable": debugSetMetatable,
 	"setupvalue":   debugSetUpvalue,
 	"traceback":    debugTraceback,
+	"upvalueid":    debugUpvalueID,
+	"upvaluejoin":  debugUpvalueJoin,
 }
 
 func debugGetInfo(L *LState) int {
@@ -158,4 +234,125 @@ func debugTraceback(L *LState) int {
 	}
 	L.Push(LString(traceback))
 	return 1
+}
+
+// debug.sethook(hook, mask[, count])
+func debugSetHook(L *LState) int {
+	hook := L.Get(1)
+	
+	// If hook is nil, disable hooks
+	if hook == LNil {
+		L.G.Hook = nil
+		L.G.HookMask = 0
+		L.G.HookCount = 0
+		return 0
+	}
+	
+	maskStr := L.CheckString(2)
+	count := L.OptInt(3, 0)
+
+	mask := 0
+	for _, c := range maskStr {
+		switch c {
+		case 'c':
+			mask |= HookMaskCall
+		case 'r':
+			mask |= HookMaskReturn
+		case 'l':
+			mask |= HookMaskLine
+		case 'n':
+			mask |= HookMaskCount
+		}
+	}
+
+	if fn, ok := hook.(*LFunction); ok {
+		L.G.Hook = fn
+		L.G.HookMask = mask
+		L.G.HookCount = count
+	} else {
+		L.ArgError(1, "hook must be a function or nil")
+	}
+	return 0
+}
+
+// debug.gethook([thread])
+func debugGetHook(L *LState) int {
+	if L.G.Hook == nil {
+		L.Push(LNil)
+	} else {
+		L.Push(L.G.Hook)
+	}
+
+	// Build mask string
+	mask := ""
+	if L.G.HookMask&HookMaskCall != 0 {
+		mask += "c"
+	}
+	if L.G.HookMask&HookMaskReturn != 0 {
+		mask += "r"
+	}
+	if L.G.HookMask&HookMaskLine != 0 {
+		mask += "l"
+	}
+	if L.G.HookMask&HookMaskCount != 0 {
+		mask += "n"
+	}
+	L.Push(LString(mask))
+
+	L.Push(LNumberInt(int64(L.G.HookCount)))
+	return 3
+}
+
+// debug.getregistry()
+func debugGetRegistry(L *LState) int {
+	L.Push(L.Get(RegistryIndex))
+	return 1
+}
+
+// debug.upvalueid(f, n)
+func debugUpvalueID(L *LState) int {
+	fn := L.CheckFunction(1)
+	n := L.CheckInt(2)
+
+	if fn.IsG {
+		L.Push(LNil)
+		return 1
+	}
+
+	if n < 1 || n > len(fn.Upvalues) {
+		L.Push(LNil)
+		return 1
+	}
+
+	uv := fn.Upvalues[n-1]
+	// Return a unique identifier for the upvalue (its address)
+	L.Push(LString(fmt.Sprintf("upvalue_%p", uv)))
+	return 1
+}
+
+// debug.upvaluejoin(f1, n1, f2, n2)
+func debugUpvalueJoin(L *LState) int {
+	f1 := L.CheckFunction(1)
+	n1 := L.CheckInt(2)
+	f2 := L.CheckFunction(3)
+	n2 := L.CheckInt(4)
+
+	if f1.IsG || f2.IsG {
+		L.ArgError(1, "Lua function expected")
+		return 0
+	}
+
+	if n1 < 1 || n1 > len(f1.Upvalues) {
+		L.ArgError(2, "invalid upvalue index")
+		return 0
+	}
+
+	if n2 < 1 || n2 > len(f2.Upvalues) {
+		L.ArgError(4, "invalid upvalue index")
+		return 0
+	}
+
+	// Share the upvalue
+	f1.Upvalues[n1-1] = f2.Upvalues[n2-1]
+	return 0
 }

@@ -56,6 +56,7 @@ Available options are:
 
 	L := lua.NewState()
 	defer L.Close()
+	L.OpenLibs()
 	if opt_m > 0 {
 		L.SetMx(opt_m)
 	}

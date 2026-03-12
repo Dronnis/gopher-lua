@@ -24,11 +24,29 @@ func mainLoop(L *LState, baseframe *callFrame) {
 		return
 	}
 
+	// Check for call hook
+	if L.G.Hook != nil && (L.G.HookMask&HookMaskCall) != 0 {
+		callHook(L, HookEventCall, -1)
+	}
+
 	for {
 		cf = L.currentFrame
 		inst = cf.Fn.Proto.Code[cf.Pc]
 		cf.Pc++
+
+		// Check for line hook
+		if L.G.Hook != nil && (L.G.HookMask&HookMaskLine) != 0 {
+			line := cf.Fn.Proto.DbgSourcePositions[cf.Pc-1]
+			if line > 0 {
+				callHook(L, HookEventLine, line)
+			}
+		}
+
 		if jumpTable[int(inst>>26)](L, inst, baseframe) == 1 {
+			// Check for return hook
+			if L.G.Hook != nil && (L.G.HookMask&HookMaskReturn) != 0 {
+				callHook(L, HookEventReturn, -1)
+			}
 			return
 		}
 	}
@@ -217,6 +235,11 @@ func callGFunction(L *LState, tailcall bool) bool {
 	if tailcall && L.Parent != nil && L.stack.Sp() == 1 {
 		switchToParentThread(L, wantret, false, true)
 		return true
+	}
+
+	// Check for return hook
+	if L.G.Hook != nil && (L.G.HookMask&HookMaskReturn) != 0 && !tailcall {
+		callHook(L, HookEventReturn, -1)
 	}
 
 	// this section is inlined by go-inline

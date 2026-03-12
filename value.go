@@ -145,6 +145,12 @@ type Global struct {
 	builtinMts map[int]LValue
 	tempFiles  []*os.File
 	gccount    int32
+
+	// Debug hooks (Lua 5.3 compatible)
+	Hook      *LFunction
+	HookMask  int
+	HookCount int
+	InHook    bool
 }
 
 type LState struct {
