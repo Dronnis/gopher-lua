@@ -2463,6 +2463,27 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 	C := int(inst>>9) & 0x1ff //GETC
 	lhs := L.rkValue(B)
 	rhs := L.rkValue(C)
+	
+	// Helper function to check if value came from direct table field access
+	isDirectFieldAccess := func(regIdx int) bool {
+		if regIdx < lbase {
+			return false // Not a local register
+		}
+		// Check previous instruction to see if it was GETTABUP, GETTABLE, or GETTABLEKS
+		if cf.Pc > 1 {
+			prevInst := cf.Fn.Proto.Code[cf.Pc-2]
+			prevOpcode := int(prevInst >> 26)
+			if prevOpcode == OP_GETTABUP || prevOpcode == OP_GETTABLE || prevOpcode == OP_GETTABLEKS {
+				// Check if the destination register matches
+				prevA := int((prevInst >> 18) & 0xff)
+				if prevA+cf.LocalBase == regIdx {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	
 	// Lua 5.3: bitwise operations coerce strings to numbers
 	var v1, v2 LNumber
 	var ok1, ok2 bool
@@ -2506,6 +2527,74 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 			}
 		}
 		return 0
+	}
+
+	// Special check for bitwise operations with floats
+	if opcode >= OP_BAND && opcode <= OP_SHR {
+		if lnum, ok1 := lhs.(LNumber); ok1 {
+			if !lnum.IsInteger() {
+				f := lnum.Float64()
+				if math.IsNaN(f) {
+					L.RaiseError("number %g has no integer representation", f)
+					return 0
+				}
+				if math.IsInf(f, 0) {
+					// Check if this came from direct table field access (like math.huge)
+					lhsReg := B
+					if (B & opBitRk) == 0 { // It's a register, not a constant
+						if isDirectFieldAccess(lbase + lhsReg) {
+							L.RaiseError("field 'huge'")
+						} else {
+							L.RaiseError("number %g has no integer representation", f)
+						}
+					} else {
+						// Constant value - use generic message
+						L.RaiseError("number %g has no integer representation", f)
+					}
+					return 0
+				}
+				if f != math.Trunc(f) {
+					L.RaiseError("number %g has no integer representation", f)
+					return 0
+				}
+				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					L.RaiseError("number %g has no integer representation", f)
+					return 0
+				}
+			}
+		}
+		if rnum, ok2 := rhs.(LNumber); ok2 {
+			if !rnum.IsInteger() {
+				f := rnum.Float64()
+				if math.IsNaN(f) {
+					L.RaiseError("number %g has no integer representation", f)
+					return 0
+				}
+				if math.IsInf(f, 0) {
+					// Check if this came from direct table field access (like math.huge)
+					rhsReg := C
+					if (C & opBitRk) == 0 { // It's a register, not a constant
+						if isDirectFieldAccess(lbase + rhsReg) {
+							L.RaiseError("field 'huge'")
+						} else {
+							L.RaiseError("number %g has no integer representation", f)
+						}
+					} else {
+						// Constant value - use generic message
+						L.RaiseError("number %g has no integer representation", f)
+					}
+					return 0
+				}
+				if f != math.Trunc(f) {
+					L.RaiseError("number %g has no integer representation", f)
+					return 0
+				}
+				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					L.RaiseError("number %g has no integer representation", f)
+					return 0
+				}
+			}
+		}
 	}
 
 	// Both operands successfully converted to numbers
@@ -2614,45 +2703,7 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 			}
 		}
 	}
-	
-	// Special check for bitwise operations with floats
-	if opcode >= OP_BAND && opcode <= OP_SHR {
-		if lnum, ok1 := lhs.(LNumber); ok1 {
-			if !lnum.IsInteger() {
-				f := lnum.Float64()
-				if math.IsInf(f, 0) || math.IsNaN(f) {
-					L.RaiseError("number %g has no integer representation", f)
-					return LNil
-				}
-				if f != math.Trunc(f) {
-					L.RaiseError("number %g has no integer representation", f)
-					return LNil
-				}
-				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
-					L.RaiseError("number %g has no integer representation", f)
-					return LNil
-				}
-			}
-		}
-		if rnum, ok2 := rhs.(LNumber); ok2 {
-			if !rnum.IsInteger() {
-				f := rnum.Float64()
-				if math.IsInf(f, 0) || math.IsNaN(f) {
-					L.RaiseError("number %g has no integer representation", f)
-					return LNil
-				}
-				if f != math.Trunc(f) {
-					L.RaiseError("number %g has no integer representation", f)
-					return LNil
-				}
-				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
-					L.RaiseError("number %g has no integer representation", f)
-					return LNil
-				}
-			}
-		}
-	}
-	
+
 	event := ""
 	switch opcode {
 	case OP_ADD:

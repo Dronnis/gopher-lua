@@ -1398,20 +1398,30 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 				if !lvalue.IsInteger() {
 					f := lvalue.Float64()
 					if math.IsInf(f, 0) {
-						// Special case for infinity in compile-time - don't optimize
-						// This will cause runtime error with "field 'huge'" message
-						return expr
+						return expr // Don't optimize, let runtime handle the error with "field 'huge'"
 					}
-					if f != math.Trunc(f) || math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					if math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
 				if !rvalue.IsInteger() {
 					f := rvalue.Float64()
 					if math.IsInf(f, 0) {
-						return expr
+						return expr // Don't optimize, let runtime handle the error with "field 'huge'"
 					}
-					if f != math.Trunc(f) || math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					if math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
@@ -1420,13 +1430,25 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 				// Check for float operands that can't be exactly represented as integers
 				if !lvalue.IsInteger() {
 					f := lvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					if math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
 				if !rvalue.IsInteger() {
 					f := rvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					if math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
@@ -1435,13 +1457,25 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 				// Check for float operands that can't be exactly represented as integers
 				if !lvalue.IsInteger() {
 					f := lvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					if math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
 				if !rvalue.IsInteger() {
 					f := rvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					if math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
@@ -1450,13 +1484,25 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 				// Check for float operands that can't be exactly represented as integers
 				if !lvalue.IsInteger() {
 					f := lvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					if math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
 				if !rvalue.IsInteger() {
 					f := rvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					if math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
@@ -1465,13 +1511,25 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 				// Check for float operands that can't be exactly represented as integers
 				if !lvalue.IsInteger() {
 					f := lvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					if math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
 				if !rvalue.IsInteger() {
 					f := rvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					if math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f != math.Trunc(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
@@ -1491,6 +1549,19 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 	case *ast.UnaryBitNotOpExpr:
 		expr.Expr = constFold(expr.Expr)
 		if value, ok := lnumberValue(expr.Expr); ok {
+			// Check for float operands that can't be exactly represented as integers
+			if !value.IsInteger() {
+				f := value.Float64()
+				if math.IsInf(f, 0) || math.IsNaN(f) {
+					return expr // Don't optimize, let runtime handle the error
+				}
+				if f != math.Trunc(f) {
+					return expr // Don't optimize, let runtime handle the error
+				}
+				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					return expr // Don't optimize, let runtime handle the error
+				}
+			}
 			return &constLValueExpr{Value: value.Bnot()}
 		}
 		return expr
