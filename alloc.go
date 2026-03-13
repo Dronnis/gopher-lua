@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"math"
 	"reflect"
 	"unsafe"
 )
@@ -55,7 +56,8 @@ func (al *allocator) LNumber2I(v LNumber) LValue {
 		}
 	} else {
 		fv := v.Float64()
-		if fv >= 0 && fv < float64(preloadLimit) && fv == float64(int64(fv)) {
+		// Don't use preloaded values for -0.0 (need to preserve sign)
+		if fv >= 0 && fv < float64(preloadLimit) && fv == float64(int64(fv)) && !math.Signbit(fv) {
 			return preloadsFloat[int(fv)]
 		}
 	}

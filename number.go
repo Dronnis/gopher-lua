@@ -489,9 +489,7 @@ func (nm LNumber) Div(other LNumber) LNumber {
 	a := nm.Float64()
 	b := other.Float64()
 	// Lua 5.3: division by zero returns inf (not error)
-	// Note: Go's float64 division handles signed zero correctly:
-	// 1.0 / 0.0 = +Inf, 1.0 / -0.0 = -Inf
-	// So we can just use Go's division directly
+	// Go's float64 division handles signed zero correctly
 	result := a / b
 	return LNumberFloat(result)
 }
