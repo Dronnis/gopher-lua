@@ -606,8 +606,23 @@ func parsePackFormat(format string) (*packFormat, error) {
 			size = 4
 		case 'j', 'J': // lua_Integer / lua_Unsigned
 			size = 8 // int64 в Go
-		case 'i', 'I': // int / unsigned int
-			size = 4
+		case 'i', 'I': // int / unsigned int с опциональным размером
+			// В Lua 5.3, после 'i' может идти размер (i1, i2, i4, i8)
+			if i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				// Читаем размер после 'i'
+				n := 0
+				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+					n = n*10 + int(format[i]-'0')
+					i++
+				}
+				// Разрешаем размеры от 1 до 16
+				if n < 1 || n > 16 {
+					return nil, fmt.Errorf("invalid format: invalid int size %d", n)
+				}
+				size = n
+			} else {
+				size = 4 // размер по умолчанию
+			}
 		case 'T': // size_t
 			size = 8
 		case 'f': // float
@@ -616,6 +631,13 @@ func parsePackFormat(format string) (*packFormat, error) {
 			size = 8
 		case 'x': // padding byte
 			size = 1
+		case 'X': // padding до максимального выравнивания
+			// 'X' добавляет padding до следующей границы выравнивания
+			// Размер зависит от текущего выравнивания
+			size = pf.align
+			if size < 8 {
+				size = 8
+			}
 		case 'c': // fixed-length string
 			// Читаем длину после c
 			if i >= len(format) {
@@ -649,15 +671,31 @@ func alignTo(pos, align int) int {
 
 // writeEndian записывает число с учётом порядка байтов
 func writeEndian(buf []byte, pos int, value uint64, size int, endian byte) {
-	if endian == packBigEndian {
-		for i := size - 1; i >= 0; i-- {
-			buf[pos+i] = byte(value & 0xFF)
-			value >>= 8
+	if size > 8 {
+		// Для размеров > 8, value уже содержит правильное знаковое расширение
+		// Просто записываем все байты
+		if endian == packBigEndian {
+			for i := size - 1; i >= 0; i-- {
+				buf[pos+i] = byte(value & 0xFF)
+				value >>= 8
+			}
+		} else {
+			for i := 0; i < size; i++ {
+				buf[pos+i] = byte(value & 0xFF)
+				value >>= 8
+			}
 		}
-	} else { // little-endian или native (little-endian для x86/x64)
-		for i := 0; i < size; i++ {
-			buf[pos+i] = byte(value & 0xFF)
-			value >>= 8
+	} else {
+		if endian == packBigEndian {
+			for i := size - 1; i >= 0; i-- {
+				buf[pos+i] = byte(value & 0xFF)
+				value >>= 8
+			}
+		} else {
+			for i := 0; i < size; i++ {
+				buf[pos+i] = byte(value & 0xFF)
+				value >>= 8
+			}
 		}
 	}
 }
@@ -820,6 +858,14 @@ func strPack(L *LState) int {
 			}
 			argIdx++
 
+			// Для размеров > 8 используем writeBytes
+			if opt.size > 8 && (opt.code == 'i' || opt.code == 'I') {
+				isSigned := (opt.code == 'i')
+				writeBytes(buf, pos, value, opt.size, pf.endian, isSigned)
+				pos += opt.size
+				continue
+			}
+
 			// Для знаковых типов нужно правильно обработать отрицательные числа
 			var uvalue uint64
 			switch opt.code {
@@ -835,6 +881,43 @@ func strPack(L *LState) int {
 				uvalue = uint64(int32(value))
 			case 'L': // unsigned long
 				uvalue = uint64(uint32(value))
+			case 'i': // signed int с опциональным размером
+				if opt.size > 8 {
+					// Для размеров > 8, нужно sign extension
+					if value < 0 {
+						// Отрицательное число - все биты 1
+						uvalue = ^uint64(0)
+					} else {
+						uvalue = uint64(value)
+					}
+				} else {
+					switch opt.size {
+					case 1:
+						uvalue = uint64(int8(value))
+					case 2:
+						uvalue = uint64(int16(value))
+					case 3, 4:
+						uvalue = uint64(int32(value))
+					default:
+						uvalue = uint64(value)
+					}
+				}
+			case 'I': // unsigned int с опциональным размером
+				if opt.size > 8 {
+					// Для размеров > 8, просто используем value
+					uvalue = uint64(value)
+				} else {
+					switch opt.size {
+					case 1:
+						uvalue = uint64(uint8(value))
+					case 2:
+						uvalue = uint64(uint16(value))
+					case 3, 4:
+						uvalue = uint64(uint32(value))
+					default:
+						uvalue = uint64(value)
+					}
+				}
 			case 'j', 'J', 'T': // int64 / uint64
 				uvalue = uint64(value)
 			case 'f': // float
@@ -850,6 +933,30 @@ func strPack(L *LState) int {
 
 	L.Push(LString(string(buf)))
 	return 1
+}
+
+// writeBytes записывает байты напрямую для размеров > 8
+func writeBytes(buf []byte, pos int, value int64, size int, endian byte, isSigned bool) {
+	if isSigned && value < 0 {
+		// Отрицательное число - все байты 0xff
+		for i := 0; i < size; i++ {
+			buf[pos+i] = 0xff
+		}
+	} else {
+		// Положительное число - записываем как обычно
+		uvalue := uint64(value)
+		if endian == packBigEndian {
+			for i := size - 1; i >= 0; i-- {
+				buf[pos+i] = byte(uvalue & 0xFF)
+				uvalue >>= 8
+			}
+		} else {
+			for i := 0; i < size; i++ {
+				buf[pos+i] = byte(uvalue & 0xFF)
+				uvalue >>= 8
+			}
+		}
+	}
 }
 
 // strUnpack - string.unpack(fmt, s [, pos])
@@ -949,6 +1056,30 @@ func strUnpack(L *LState) int {
 				value = LNumberInt(int64(int32(uvalue)))
 			case 'L': // unsigned long
 				value = LNumberInt(int64(uvalue))
+			case 'i': // signed int с опциональным размером
+				// Sign extension для разных размеров
+				var signed int64
+				mask := uint64(0)
+				for j := 0; j < opt.size; j++ {
+					mask = (mask << 8) | 0xff
+				}
+				signBit := uint64(1) << (opt.size*8 - 1)
+				
+				if uvalue&signBit != 0 {
+					// Отрицательное число - sign extend
+					signed = int64(uvalue | ^mask)
+				} else {
+					// Положительное число
+					signed = int64(uvalue & mask)
+				}
+				value = LNumberInt(signed)
+			case 'I': // unsigned int с опциональным размером
+				// Маска для нужного размера
+				mask := uint64(0)
+				for j := 0; j < opt.size; j++ {
+					mask = (mask << 8) | 0xff
+				}
+				value = LNumberInt(int64(uvalue & mask))
 			case 'j', 'J', 'T': // int64 / uint64
 				value = LNumberInt(int64(uvalue))
 			case 'f': // float
