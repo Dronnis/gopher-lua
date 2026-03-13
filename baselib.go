@@ -576,7 +576,7 @@ func baseToNumber(L *LState) int {
 		L.Push(lv)
 	case LString:
 		str := strings.Trim(string(lv), " \n\t")
-		
+
 		// If no base is specified, use parseNumber for full support including hex floats
 		if noBase {
 			if num, err := parseNumber(str); err == nil {
@@ -587,16 +587,28 @@ func baseToNumber(L *LState) int {
 		} else {
 			// Base is specified, use original logic for integer parsing
 			if strings.Index(str, ".") > -1 {
-				if v, err := strconv.ParseFloat(str, 64); err != nil {
+				if v, err := strconv.ParseFloat(str, base); err != nil {
 					L.Push(LNil)
 				} else {
 					L.Push(LNumberFloat(v))
 				}
 			} else {
-				if v, err := strconv.ParseInt(str, base, 64); err != nil {
-					L.Push(LNil)
+				// For base 16 (hex), handle wraparound for large numbers
+				if base == 16 {
+					// Try to parse as unsigned first for wraparound behavior
+					if v, err := strconv.ParseUint(str, base, 64); err == nil {
+						L.Push(LNumberInt(int64(v)))
+					} else if v, err := strconv.ParseInt(str, base, 64); err == nil {
+						L.Push(LNumberInt(v))
+					} else {
+						L.Push(LNil)
+					}
 				} else {
-					L.Push(LNumberInt(v))
+					if v, err := strconv.ParseInt(str, base, 64); err != nil {
+						L.Push(LNil)
+					} else {
+						L.Push(LNumberInt(v))
+					}
 				}
 			}
 		}

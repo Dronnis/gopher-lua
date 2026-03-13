@@ -171,6 +171,23 @@ func parseNumber(number string) (LNumber, error) {
 					result = -result
 				}
 				return LNumberInt(result), nil
+			} else if numErr, ok := err.(*strconv.NumError); ok && numErr.Err == strconv.ErrRange {
+				// For overflow, use two's complement wraparound
+				// Parse the hex digits and keep only the lower 64 bits
+				hexStr := strings.ToLower(strings.TrimPrefix(number, "0x"))
+				if len(hexStr) > 16 {
+					// Keep only the last 16 hex digits (64 bits)
+					hexStr = hexStr[len(hexStr)-16:]
+				}
+				if v, err := strconv.ParseUint("0x"+hexStr, 16, 64); err == nil {
+					result := int64(v)
+					if isNegative {
+						result = -result
+					}
+					return LNumberInt(result), nil
+				}
+				// If still fails, return 0
+				return LNumberInt(0), nil
 			}
 		}
 	}
