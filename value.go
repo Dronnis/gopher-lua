@@ -172,6 +172,9 @@ type LState struct {
 	mainLoop     func(*LState, *callFrame)
 	ctx          context.Context
 	ctxCancelFn  context.CancelFunc
+	// nCcalls tracks nested C calls for yield protection
+	// When > 0, yield is not allowed (yield across C boundary)
+	nCcalls int
 }
 
 func (ls *LState) String() string   { return fmt.Sprintf("thread: %p", ls) }

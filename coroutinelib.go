@@ -67,6 +67,16 @@ func coIsYieldable(L *LState) int {
 }
 
 func coYield(L *LState) int {
+	// Check if we're in the main thread or not in a coroutine context
+	if L.Parent == nil {
+		L.raiseError(1, "can not yield from outside of a coroutine")
+		return 0
+	}
+	// Check if we're trying to yield across a C boundary
+	if L.nCcalls > 0 {
+		L.raiseError(1, "attempt to yield across metamethod/c-call boundary")
+		return 0
+	}
 	return -1
 }
 

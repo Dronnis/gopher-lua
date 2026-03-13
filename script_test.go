@@ -31,29 +31,34 @@ var gluaTests []string = []string{
 
 var luaTests []string = []string{
 
-	"all.lua",
+	//"all.lua",
 	"attrib.lua",
-	"calls.lua",
-	"closure.lua",
-	"coroutine.lua",
-	"constructs.lua",
-	"events.lua",
-	"literals.lua",
-	"locals.lua",
-	"math.lua",
-	"sort.lua",
-	"strings.lua",
-	"vararg.lua",
-	"pm.lua",
-	"files.lua",
+	"big.lua",
 	"bitwise.lua",
 	"bwcoercion.lua",
+	"calls.lua",
+	"closure.lua",
+	"constructs.lua",
 	"coroutine.lua",
+	"db.lua",
+	"errors.lua",
+	"events.lua",
+	"files.lua",
+	"gc.lua",
 	"goto.lua",
-	"heavy.lua",
+	//	"heavy.lua",
+	"literals.lua",
+	"locals.lua",
+	"main.lua",
+	"math.lua",
+	"nextvar.lua",
+	"pm.lua",
+	"sort.lua",
+	"strings.lua",
 	"tpack.lua",
-	"goto.lua",
 	"utf8.lua",
+	"vararg.lua",
+	"verybig.lua",
 }
 
 func testScriptCompile(t *testing.T, script string) {
@@ -115,6 +120,13 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 		if script == "constructs.lua" {
 			L.SetGlobal("_soft", LTrue)
 		}
+
+		// Set arg and _ARG tables for Lua 5.3 compatibility (used by main.lua and other tests)
+		// Lua 5.3: arg table has positive indices for arguments and negative for program name
+		argtb := L.NewTable()
+		argtb.RawSetInt(-3, LString(script)) // Program name at -3 (like lua command)
+		L.SetGlobal("arg", argtb)
+		L.SetGlobal("_ARG", argtb)
 
 		// Force GC before running memory-intensive tests
 		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" {

@@ -28,7 +28,9 @@ func tableSort(L *LState) int {
 	if L.GetTop() != 1 {
 		sorter.Fn = L.CheckFunction(2)
 	}
+	L.nCcalls++
 	sort.Sort(sorter)
+	L.nCcalls--
 	return 0
 }
 
