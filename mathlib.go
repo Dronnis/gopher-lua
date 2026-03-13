@@ -8,7 +8,7 @@ import (
 func OpenMath(L *LState) int {
 	mod := L.RegisterModule(MathLibName, mathFuncs).(*LTable)
 	mod.RawSetString("pi", LNumberFloat(math.Pi))
-	mod.RawSetString("huge", LNumberFloat(math.MaxFloat64))
+	mod.RawSetString("huge", LNumberFloat(math.Inf(1)))
 	// Lua 5.3 integer constants
 	mod.RawSetString("maxinteger", LNumberInt(math.MaxInt64))
 	mod.RawSetString("mininteger", LNumberInt(math.MinInt64))

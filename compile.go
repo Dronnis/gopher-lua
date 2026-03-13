@@ -1397,13 +1397,21 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 				// Check for float operands that can't be exactly represented as integers
 				if !lvalue.IsInteger() {
 					f := lvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					if math.IsInf(f, 0) {
+						// Special case for infinity in compile-time - don't optimize
+						// This will cause runtime error with "field 'huge'" message
+						return expr
+					}
+					if f != math.Trunc(f) || math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}
 				if !rvalue.IsInteger() {
 					f := rvalue.Float64()
-					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					if math.IsInf(f, 0) {
+						return expr
+					}
+					if f != math.Trunc(f) || math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 						return expr // Don't optimize, let runtime handle the error
 					}
 				}

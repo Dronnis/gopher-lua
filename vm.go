@@ -2512,11 +2512,14 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 	// Check if floats can be exactly represented as integers
 	if !v1.IsInteger() {
 		f := v1.Float64()
-		if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+		if math.IsInf(f, 0) || math.IsNaN(f) {
 			L.RaiseError("number %g has no integer representation", f)
 			return 0
 		}
-		// Check if the float is within int64 range more carefully
+		if f != math.Trunc(f) {
+			L.RaiseError("number %g has no integer representation", f)
+			return 0
+		}
 		if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 			L.RaiseError("number %g has no integer representation", f)
 			return 0
@@ -2524,11 +2527,14 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 	}
 	if !v2.IsInteger() {
 		f := v2.Float64()
-		if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+		if math.IsInf(f, 0) || math.IsNaN(f) {
 			L.RaiseError("number %g has no integer representation", f)
 			return 0
 		}
-		// Check if the float is within int64 range more carefully
+		if f != math.Trunc(f) {
+			L.RaiseError("number %g has no integer representation", f)
+			return 0
+		}
 		if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 			L.RaiseError("number %g has no integer representation", f)
 			return 0
@@ -2614,26 +2620,34 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		if lnum, ok1 := lhs.(LNumber); ok1 {
 			if !lnum.IsInteger() {
 				f := lnum.Float64()
-				if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+				if math.IsInf(f, 0) || math.IsNaN(f) {
 					L.RaiseError("number %g has no integer representation", f)
-					return LNil // never reached
+					return LNil
+				}
+				if f != math.Trunc(f) {
+					L.RaiseError("number %g has no integer representation", f)
+					return LNil
 				}
 				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 					L.RaiseError("number %g has no integer representation", f)
-					return LNil // never reached
+					return LNil
 				}
 			}
 		}
 		if rnum, ok2 := rhs.(LNumber); ok2 {
 			if !rnum.IsInteger() {
 				f := rnum.Float64()
-				if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+				if math.IsInf(f, 0) || math.IsNaN(f) {
 					L.RaiseError("number %g has no integer representation", f)
-					return LNil // never reached
+					return LNil
+				}
+				if f != math.Trunc(f) {
+					L.RaiseError("number %g has no integer representation", f)
+					return LNil
 				}
 				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
 					L.RaiseError("number %g has no integer representation", f)
-					return LNil // never reached
+					return LNil
 				}
 			}
 		}
