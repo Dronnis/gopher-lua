@@ -35,6 +35,8 @@ func writeChar(buf *bytes.Buffer, c int) { buf.WriteByte(byte(c)) }
 
 func isDecimal(ch int) bool { return '0' <= ch && ch <= '9' }
 
+func isOctal(ch int) bool { return '0' <= ch && ch <= '7' }
+
 func isHex(ch int) bool { return '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'f' || 'A' <= ch && ch <= 'F' }
 
 func isIdent(ch int, pos int) bool {
@@ -278,6 +280,8 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 		sc.Newline('\r')
 	case 'x':
 		// \xXX hex escape (Lua 5.3 feature)
+		// Save position before reading hex digits for error reporting
+		savedPos := sc.Pos
 		h1 := sc.Next()
 		h2 := sc.Next()
 		if isHex(h1) && isHex(h2) {
@@ -285,9 +289,23 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 			val, _ := strconv.ParseInt(hex, 16, 32)
 			buf.WriteByte(byte(val))
 		} else {
-			// Invalid hex escape - return error with proper format
-			// Lua expects "near '\x'" format
-			return sc.Error("\\x", "invalid hex escape sequence")
+			// Invalid hex escape - build token based on what we read
+			// Lua 5.3 behavior:
+			// - If h1 is not hex: token is \xh1 (e.g., \xr, \x")
+			// - If h1 is hex but h2 is not: token is \xh1h2 (e.g., \x5", \x8%)
+			token := "\\x"
+			if h1 != EOF {
+				token += string(rune(h1))
+				// Include h2 only if h1 was hex (partial hex escape)
+				if isHex(h1) && h2 != EOF {
+					token += string(rune(h2))
+				}
+			}
+			// For EOF cases, use the saved position for proper error format
+			if sc.Pos.Line == EOF {
+				sc.Pos = savedPos
+			}
+			return sc.Error(token, "invalid hex escape sequence")
 		}
 	case 'u':
 		// \u{XXX} Unicode escape (Lua 5.3 feature)
@@ -302,15 +320,29 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 					sc.Next()  // skip '}'
 					break
 				} else if ch == EOF {
-					// Unexpected EOF inside \u{}
-					return sc.Error("\\u", "unfinished \\u{} escape sequence")
+					// Unexpected EOF inside \u{} - include prefix and partial hex
+					token := buf.String() + "\\u{" + hex
+					return sc.Error(token, "unfinished \\u{} escape sequence")
 				} else {
-					// Invalid Unicode escape
-					return sc.Error("\\u", "invalid unicode escape sequence")
+					// Invalid character in \u{} - read it and include in token
+					invalidCh := sc.Next()
+					token := buf.String() + "\\u{" + hex + string(rune(invalidCh))
+					// Check if next char is '}' and include it
+					if sc.Peek() == '}' {
+						sc.Next()  // skip '}'
+						token += "}"
+					}
+					return sc.Error(token, "invalid unicode escape sequence")
 				}
 			}
 			if len(hex) > 0 {
 				val, _ := strconv.ParseInt(hex, 16, 32)
+				// Check for valid Unicode code point range
+				if val > 0x10FFFF {
+					// For invalid code point, include the string prefix and full escape sequence
+					token := buf.String() + "\\u{" + hex + "}"
+					return sc.Error(token, "invalid unicode code point")
+				}
 				// Encode as UTF-8
 				if val <= 0x7F {
 					buf.WriteByte(byte(val))
@@ -328,23 +360,42 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 					buf.WriteByte(0x80 | byte(val&0x3F))
 				}
 			} else {
-				// Invalid Unicode escape - return error
-				return sc.Error("\\u", "invalid unicode escape sequence")
+				// No hex digits - include prefix and opening brace
+				token := buf.String() + "\\u{"
+				return sc.Error(token, "invalid unicode escape sequence")
 			}
 		} else {
-			// Not a Unicode escape - return error
-			return sc.Error("\\u", "invalid unicode escape sequence")
+			// Not a Unicode escape (no '{' after \u) - return error
+			// Include following characters to match Lua 5.3 error format
+			token := buf.String() + "\\u"
+			nextCh := sc.Peek()
+			if nextCh != EOF {
+				token += string(rune(nextCh))
+			}
+			return sc.Error(token, "invalid unicode escape sequence")
 		}
 	default:
 		if '0' <= ch && ch <= '9' {
+			// Decimal escape sequence (\0 to \255)
+			// Lua 5.3 uses decimal, not octal, for \ddd escapes
 			bytes := []byte{byte(ch)}
 			for i := 0; i < 2 && isDecimal(sc.Peek()); i++ {
 				bytes = append(bytes, byte(sc.Next()))
 			}
 			val, _ := strconv.ParseInt(string(bytes), 10, 32)
+			if val > 255 {
+				// Value > 255 is an error in Lua 5.3
+				token := "\\" + string(bytes)
+				nextCh := sc.Peek()
+				if nextCh != EOF {
+					token += string(rune(nextCh))
+				}
+				return sc.Error(token, "invalid escape sequence")
+			}
 			writeChar(buf, int(val))
 		} else {
-			writeChar(buf, ch)
+			// Invalid escape sequence - Lua 5.3 raises an error for unknown escapes
+			return sc.Error("\\"+string(rune(ch)), "invalid escape sequence")
 		}
 	}
 	return nil
