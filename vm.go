@@ -569,7 +569,11 @@ func init() {
 			A := int(inst>>18) & 0xff //GETA
 			RA := lbase + A
 			B := int(inst & 0x1ff) //GETB
-			v := cf.Fn.Upvalues[B].Value()
+			// Check if upvalue exists and is not nil
+			var v LValue = LNil
+			if B < len(cf.Fn.Upvalues) && cf.Fn.Upvalues[B] != nil {
+				v = cf.Fn.Upvalues[B].Value()
+			}
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -599,14 +603,30 @@ func init() {
 			A := int(inst>>18) & 0xff //GETA
 			RA := lbase + A
 			B := int(inst & 0x1ff) //GETB
-			cf.Fn.Upvalues[B].SetValue(reg.Get(RA))
+			// Initialize upvalue if it's nil
+			if B < len(cf.Fn.Upvalues) {
+				if cf.Fn.Upvalues[B] == nil {
+					cf.Fn.Upvalues[B] = &Upvalue{
+						closed: true,
+						value:  LNil,
+					}
+				}
+				cf.Fn.Upvalues[B].SetValue(reg.Get(RA))
+			}
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_GETTABUP
 			cf := L.currentFrame
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
-			upvalue := cf.Fn.Upvalues[B]
+			// Check if upvalue exists and is not nil
+			var upvalue *Upvalue
+			if B < len(cf.Fn.Upvalues) && cf.Fn.Upvalues[B] != nil {
+				upvalue = cf.Fn.Upvalues[B]
+			} else {
+				// Create a nil upvalue if it doesn't exist
+				upvalue = &Upvalue{closed: true, value: LNil}
+			}
 			// Lua 5.3: GETTABUP uses RK(C) which can be register or constant
 			// For string constants, use getFieldString for efficiency
 			if opIsK(C) {
@@ -688,7 +708,14 @@ func init() {
 			A := int(inst>>18) & 0xff //GETA
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
-			upvalue := cf.Fn.Upvalues[A]
+			// Check if upvalue exists and is not nil
+			var upvalue *Upvalue
+			if A < len(cf.Fn.Upvalues) && cf.Fn.Upvalues[A] != nil {
+				upvalue = cf.Fn.Upvalues[A]
+			} else {
+				// Create a nil upvalue if it doesn't exist
+				upvalue = &Upvalue{closed: true, value: LNil}
+			}
 			L.setField(upvalue.Value(), L.rkValue(B), L.rkValue(C))
 			return 0
 		},

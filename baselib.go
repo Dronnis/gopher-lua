@@ -231,12 +231,22 @@ func loadaux(L *LState, reader io.Reader, chunkname string, env LValue) int {
 	} else {
 		// Set the environment for the loaded function
 		if env != nil {
+			// In Lua 5.3, _ENV is the first upvalue of the function
+			// We need to set it to the provided environment value
+			if len(fn.Upvalues) > 0 {
+				// Find the _ENV upvalue (should be the first one)
+				if fn.Proto != nil && len(fn.Proto.DbgUpvalues) > 0 && fn.Proto.DbgUpvalues[0] == "_ENV" {
+					// Create a new upvalue with the environment value
+					fn.Upvalues[0] = &Upvalue{
+						value:  env,
+						closed: true,
+					}
+				}
+			}
+			// Also set Env for backward compatibility with table environments
 			if tb, ok := env.(*LTable); ok {
 				fn.Env = tb
 			}
-			// For non-table environments, Lua 5.3 sets the _ENV upvalue
-			// This is more complex and requires upvalue manipulation
-			// For now, we only support table environments
 		}
 		L.Push(fn)
 		return 1
@@ -250,13 +260,10 @@ func baseLoad(L *LState) int {
 	chunkname := L.OptString(2, "<load>")
 	mode := L.OptString(3, "bt")  // Default mode is "bt" (both text and binary)
 
-	// Get environment (4th argument) - must be a table in GopherLua
-	var env *LTable
+	// Get environment (4th argument) - can be any value in Lua 5.3
+	var env LValue
 	if L.GetTop() >= 4 {
-		if lv, ok := L.Get(4).(*LTable); ok {
-			env = lv
-		}
-		// Non-table environments are not supported in GopherLua
+		env = L.Get(4)
 	}
 
 	var reader io.Reader
@@ -318,6 +325,7 @@ func baseLoad(L *LState) int {
 	// "b" = only binary chunks
 	// "t" = only text chunks  
 	// "bt" or "tb" = both (default)
+	// Empty chunks are considered text chunks
 	if mode == "b" && !isBinary {
 		L.Push(LNil)
 		L.Push(LString("attempt to load a text chunk"))
@@ -351,11 +359,9 @@ func baseLoadFile(L *LState) int {
 		defer reader.(*os.File).Close()
 	}
 	// Get environment (4th argument)
-	var env *LTable
+	var env LValue
 	if L.GetTop() >= 4 {
-		if lv, ok := L.Get(4).(*LTable); ok {
-			env = lv
-		}
+		env = L.Get(4)
 	}
 	return loadaux(L, reader, chunkname, env)
 }
@@ -364,11 +370,9 @@ func baseLoadString(L *LState) int {
 	// Lua 5.3: loadstring(string [, chunkname [, env]])
 	chunkname := L.OptString(2, "<string>")
 	// Get environment (3rd argument)
-	var env *LTable
+	var env LValue
 	if L.GetTop() >= 3 {
-		if lv, ok := L.Get(3).(*LTable); ok {
-			env = lv
-		}
+		env = L.Get(3)
 	}
 	return loadaux(L, strings.NewReader(L.CheckString(1)), chunkname, env)
 }

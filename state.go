@@ -1856,6 +1856,10 @@ func (ls *LState) GetUpvalue(fn *LFunction, no int) (string, LValue) {
 
 	no--
 	if no >= 0 && no < len(fn.Upvalues) {
+		// Check if upvalue is nil (can happen with binary chunks)
+		if fn.Upvalues[no] == nil {
+			return "", LNil
+		}
 		return fn.Proto.DbgUpvalues[no], fn.Upvalues[no].Value()
 	}
 	return "", LNil
@@ -1868,6 +1872,13 @@ func (ls *LState) SetUpvalue(fn *LFunction, no int, lv LValue) string {
 
 	no--
 	if no >= 0 && no < len(fn.Upvalues) {
+		// Initialize upvalue if it's nil (can happen with binary chunks)
+		if fn.Upvalues[no] == nil {
+			fn.Upvalues[no] = &Upvalue{
+				closed: true,
+				value:  LNil,
+			}
+		}
 		fn.Upvalues[no].SetValue(lv)
 		return fn.Proto.DbgUpvalues[no]
 	}

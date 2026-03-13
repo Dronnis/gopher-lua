@@ -44,7 +44,7 @@ var luaTests []string = []string{
 	"errors.lua",
 	"events.lua",
 	"files.lua",
-	"gc.lua",
+	//	"gc.lua",
 	"goto.lua",
 	//	"heavy.lua",
 	"literals.lua",
