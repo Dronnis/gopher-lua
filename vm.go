@@ -2509,6 +2509,32 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 	}
 
 	// Both operands successfully converted to numbers
+	// Check if floats can be exactly represented as integers
+	if !v1.IsInteger() {
+		f := v1.Float64()
+		if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+			L.RaiseError("number %g has no integer representation", f)
+			return 0
+		}
+		// Check if the float is within int64 range more carefully
+		if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+			L.RaiseError("number %g has no integer representation", f)
+			return 0
+		}
+	}
+	if !v2.IsInteger() {
+		f := v2.Float64()
+		if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+			L.RaiseError("number %g has no integer representation", f)
+			return 0
+		}
+		// Check if the float is within int64 range more carefully
+		if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+			L.RaiseError("number %g has no integer representation", f)
+			return 0
+		}
+	}
+	
 	v := numberArith(L, opcode, v1, v2)
 		{
 			rg := reg
@@ -2548,6 +2574,11 @@ func numberArith(L *LState, opcode int, lhs, rhs LNumber) LNumber {
 	case OP_POW:
 		return lhs.Pow(rhs)
 	case OP_IDIV:
+		// Lua 5.3: floor division by zero should raise an error only for integer // integer
+		if rhs.IsInteger() && rhs.Int64() == 0 && lhs.IsInteger() {
+			L.RaiseError("divide by zero")
+			return LNumberInt(0) // never reached
+		}
 		return lhs.IDiv(rhs)
 	case OP_BAND:
 		return lhs.Band(rhs)
@@ -2565,6 +2596,49 @@ func numberArith(L *LState, opcode int, lhs, rhs LNumber) LNumber {
 }
 
 func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
+	// Special check for floor division by zero
+	if opcode == OP_IDIV {
+		if rnum, ok := rhs.(LNumber); ok {
+			if lnum, ok2 := lhs.(LNumber); ok2 {
+				// Only raise error for integer // integer
+				if rnum.IsInteger() && rnum.Int64() == 0 && lnum.IsInteger() {
+					L.RaiseError("divide by zero")
+					return LNil // never reached
+				}
+			}
+		}
+	}
+	
+	// Special check for bitwise operations with floats
+	if opcode >= OP_BAND && opcode <= OP_SHR {
+		if lnum, ok1 := lhs.(LNumber); ok1 {
+			if !lnum.IsInteger() {
+				f := lnum.Float64()
+				if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					L.RaiseError("number %g has no integer representation", f)
+					return LNil // never reached
+				}
+				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					L.RaiseError("number %g has no integer representation", f)
+					return LNil // never reached
+				}
+			}
+		}
+		if rnum, ok2 := rhs.(LNumber); ok2 {
+			if !rnum.IsInteger() {
+				f := rnum.Float64()
+				if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+					L.RaiseError("number %g has no integer representation", f)
+					return LNil // never reached
+				}
+				if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+					L.RaiseError("number %g has no integer representation", f)
+					return LNil // never reached
+				}
+			}
+		}
+	}
+	
 	event := ""
 	switch opcode {
 	case OP_ADD:

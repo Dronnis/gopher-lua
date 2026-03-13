@@ -1373,20 +1373,100 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 			case "/":
 				return &constLValueExpr{Value: lvalue.Div(rvalue)}
 			case "//":
+				// Check for division by zero at compile time
+				// Only for integer // integer
+				if rvalue.IsInteger() && rvalue.Int64() == 0 && lvalue.IsInteger() {
+					// Don't optimize division by zero - let it be handled at runtime
+					return expr
+				}
 				return &constLValueExpr{Value: lvalue.IDiv(rvalue)}
 			case "%":
 				return &constLValueExpr{Value: lvalue.Mod(rvalue)}
 			case "^":
-				return &constLValueExpr{Value: lvalue.Pow(rvalue)}
+				// Check if the result might be too large for integer representation
+				result := lvalue.Pow(rvalue)
+				if !result.IsInteger() {
+					f := result.Float64()
+					if f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+						// Result is too large, don't optimize
+						return expr
+					}
+				}
+				return &constLValueExpr{Value: result}
 			case "<<":
+				// Check for float operands that can't be exactly represented as integers
+				if !lvalue.IsInteger() {
+					f := lvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
+				if !rvalue.IsInteger() {
+					f := rvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) || f >= 9223372036854775808.0 || f < -9223372036854775808.0 {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
 				return &constLValueExpr{Value: lvalue.Shl(rvalue)}
 			case ">>":
+				// Check for float operands that can't be exactly represented as integers
+				if !lvalue.IsInteger() {
+					f := lvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
+				if !rvalue.IsInteger() {
+					f := rvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
 				return &constLValueExpr{Value: lvalue.Shr(rvalue)}
 			case "&":
+				// Check for float operands that can't be exactly represented as integers
+				if !lvalue.IsInteger() {
+					f := lvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
+				if !rvalue.IsInteger() {
+					f := rvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
 				return &constLValueExpr{Value: lvalue.Band(rvalue)}
 			case "~":
+				// Check for float operands that can't be exactly represented as integers
+				if !lvalue.IsInteger() {
+					f := lvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
+				if !rvalue.IsInteger() {
+					f := rvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
 				return &constLValueExpr{Value: lvalue.Bxor(rvalue)}
 			case "|":
+				// Check for float operands that can't be exactly represented as integers
+				if !lvalue.IsInteger() {
+					f := lvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
+				if !rvalue.IsInteger() {
+					f := rvalue.Float64()
+					if f != math.Trunc(f) || math.IsInf(f, 0) || math.IsNaN(f) {
+						return expr // Don't optimize, let runtime handle the error
+					}
+				}
 				return &constLValueExpr{Value: lvalue.Bor(rvalue)}
 			default:
 				panic(fmt.Sprintf("unknown binop: %v", expr.Operator))

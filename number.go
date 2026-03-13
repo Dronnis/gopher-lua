@@ -168,9 +168,58 @@ func (nm LNumber) Format(f fmt.State, c rune) {
 
 // Equal checks if two LNumbers are equal
 func (nm LNumber) Equal(other LNumber) bool {
+	// Lua 5.3: integers and floats can be equal if they represent the same mathematical value
+	// But we need to be careful about precision
+	
+	// If both are integers, compare as integers
 	if nm.IsInteger() && other.IsInteger() {
 		return nm.Int64() == other.Int64()
 	}
+	
+	// If one is integer and one is float, we need special handling
+	if nm.IsInteger() && !other.IsInteger() {
+		// nm is integer, other is float
+		intVal := nm.Int64()
+		floatVal := other.Float64()
+		
+		// Check if float can represent the integer exactly
+		if math.IsInf(floatVal, 0) || math.IsNaN(floatVal) {
+			return false
+		}
+		
+		// Check if converting float back to int gives the same value
+		if floatVal != math.Trunc(floatVal) {
+			return false // float has fractional part
+		}
+		
+		// Check if the float can exactly represent this integer
+		// For large integers, float64 may lose precision
+		convertedBack := int64(floatVal)
+		return intVal == convertedBack && float64(convertedBack) == floatVal
+	}
+	
+	if !nm.IsInteger() && other.IsInteger() {
+		// nm is float, other is integer
+		floatVal := nm.Float64()
+		intVal := other.Int64()
+		
+		// Check if float can represent the integer exactly
+		if math.IsInf(floatVal, 0) || math.IsNaN(floatVal) {
+			return false
+		}
+		
+		// Check if converting float back to int gives the same value
+		if floatVal != math.Trunc(floatVal) {
+			return false // float has fractional part
+		}
+		
+		// Check if the float can exactly represent this integer
+		// For large integers, float64 may lose precision
+		convertedBack := int64(floatVal)
+		return intVal == convertedBack && float64(convertedBack) == floatVal
+	}
+	
+	// Both are floats
 	f1 := nm.Float64()
 	f2 := other.Float64()
 	// Handle infinity and NaN properly
@@ -199,7 +248,83 @@ func (nm LNumber) Compare(other LNumber) int {
 		return 0
 	}
 	
-	// For floats or mixed, use float comparison
+	// For mixed types, we need to be careful about precision
+	if nm.IsInteger() && !other.IsInteger() {
+		// nm is integer, other is float
+		intVal := nm.Int64()
+		floatVal := other.Float64()
+		
+		// Handle special float values
+		if math.IsInf(floatVal, 1) {
+			return -1 // integer < +inf
+		}
+		if math.IsInf(floatVal, -1) {
+			return 1 // integer > -inf
+		}
+		if math.IsNaN(floatVal) {
+			return 0 // NaN comparisons are false
+		}
+		
+		// Check if float has fractional part
+		if floatVal != math.Trunc(floatVal) {
+			// Float has fractional part, use float comparison
+			intAsFloat := float64(intVal)
+			if intAsFloat < floatVal {
+				return -1
+			} else if intAsFloat > floatVal {
+				return 1
+			}
+			return 0
+		}
+		
+		// Float is a whole number, check if it can be represented as int64
+		if floatVal >= float64(math.MinInt64) && floatVal <= float64(math.MaxInt64) {
+			// Try to convert float to integer
+			floatAsInt := int64(floatVal)
+			// Check if conversion is exact
+			if float64(floatAsInt) == floatVal {
+				// Exact conversion, compare as integers
+				if intVal < floatAsInt {
+					return -1
+				} else if intVal > floatAsInt {
+					return 1
+				}
+				return 0
+			}
+		}
+		
+		// Float cannot be exactly represented as integer, or is out of range
+		// Use float comparison, but be aware of precision issues
+		intAsFloat := float64(intVal)
+		if intAsFloat < floatVal {
+			return -1
+		} else if intAsFloat > floatVal {
+			return 1
+		}
+		
+		// They are equal as floats, but we need to check if this is due to precision loss
+		// If the float is very large and integer is at the boundary, assume integer < float
+		if math.Abs(floatVal) >= (1<<53) && intVal == math.MaxInt64 {
+			// Special case: maxint compared to a large positive float
+			// The float likely represents a value > maxint but was rounded down
+			return -1
+		}
+		if math.Abs(floatVal) >= (1<<53) && intVal == math.MinInt64 {
+			// Special case: minint compared to a large negative float
+			// The float likely represents a value < minint but was rounded up
+			return 1
+		}
+		
+		return 0
+	}
+	
+	if !nm.IsInteger() && other.IsInteger() {
+		// nm is float, other is integer - reverse the logic
+		result := LNumberInt(other.Int64()).Compare(LNumberFloat(nm.Float64()))
+		return -result // reverse the result
+	}
+	
+	// Both are floats
 	f1 := nm.Float64()
 	f2 := other.Float64()
 
@@ -355,6 +480,33 @@ func (nm LNumber) Div(other LNumber) LNumber {
 // IDiv performs integer division following Lua 5.3 semantics (floor division)
 // Lua 5.3: floor division preserves the type of operands - if either operand is float, result is float
 func (nm LNumber) IDiv(other LNumber) LNumber {
+	// Special case: if both are integers, do integer arithmetic to avoid precision loss
+	if nm.IsInteger() && other.IsInteger() {
+		a := nm.Int64()
+		b := other.Int64()
+		
+		// Division by zero
+		if b == 0 {
+			if a == 0 {
+				return LNumberFloat(math.NaN())  // 0/0 = NaN
+			}
+			// Return +inf or -inf based on signs
+			if (a < 0) != (b < 0) {
+				return LNumberFloat(math.Inf(-1))
+			}
+			return LNumberFloat(math.Inf(1))
+		}
+		
+		// Integer floor division
+		q := a / b
+		// Adjust for floor division (towards negative infinity)
+		if a%b != 0 && (a < 0) != (b < 0) {
+			q--
+		}
+		return LNumberInt(q)
+	}
+	
+	// At least one operand is float, use float arithmetic
 	a := nm.Float64()
 	b := other.Float64()
 	// Lua 5.3: division by zero returns inf
@@ -370,11 +522,6 @@ func (nm LNumber) IDiv(other LNumber) LNumber {
 	}
 	result := a / b
 	floored := math.Floor(result)
-	// Lua 5.3: if either operand is float, result should be float
-	// Only return integer if BOTH operands are integers AND result fits in int64
-	if nm.IsInteger() && other.IsInteger() && floored == float64(int64(floored)) && !math.IsInf(floored, 0) {
-		return LNumberInt(int64(floored))
-	}
 	return LNumberFloat(floored)
 }
 
