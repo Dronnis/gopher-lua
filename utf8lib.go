@@ -88,9 +88,6 @@ func isValidCodePoint(codePoint rune) bool {
 // utf8Char - utf8.char(codepoint, ...)
 func utf8Char(L *LState) int {
 	top := L.GetTop()
-	if top == 0 {
-		L.ArgError(1, "value expected")
-	}
 
 	result := ""
 	for i := 1; i <= top; i++ {
@@ -98,12 +95,12 @@ func utf8Char(L *LState) int {
 		codePoint := rune(cp)
 
 		if !isValidCodePoint(codePoint) {
-			L.ArgError(i, fmt.Sprintf("invalid code point %d", cp))
+			L.ArgError(i, "value out of range")
 		}
 
 		s, err := encodeCodePoint(codePoint)
 		if err != nil {
-			L.ArgError(i, err.Error())
+			L.ArgError(i, "value out of range")
 		}
 		result += s
 	}
@@ -116,12 +113,34 @@ func utf8Char(L *LState) int {
 func utf8CodePoint(L *LState) int {
 	s := L.CheckString(1)
 	i := L.OptInt(2, 1)
-	j := L.OptInt(3, i)
 
-	i = luaIndex2StringIndex(s, i, true)
-	j = luaIndex2StringIndex(s, j, false)
+	// Если j не указан, он равен i (возвращаем только один символ)
+	j := i
+	if L.GetTop() >= 3 {
+		j = L.CheckInt(3)
+	}
 
-	if i > j || i >= len(s) {
+	// Преобразуем отрицательные индексы
+	l := len(s)
+	if i < 0 {
+		i = l + i + 1
+	}
+	if j < 0 {
+		j = l + j + 1
+	}
+
+	// Преобразуем в 0-based индексы
+	i = i - 1
+	j = j - 1
+
+	// Если i > j, возвращаем пустой результат (без ошибок)
+	if i > j {
+		return 0
+	}
+
+	// Проверяем диапазон
+	if i < 0 || i >= l || j < 0 || j >= l {
+		L.RaiseError("out of range")
 		return 0
 	}
 
@@ -130,7 +149,8 @@ func utf8CodePoint(L *LState) int {
 	for pos <= j && pos < len(s) {
 		r, size, ok := decodeCodePoint(s, pos)
 		if !ok {
-			L.ArgError(1, fmt.Sprintf("invalid UTF-8 byte at position %d", pos+1))
+			L.RaiseError("invalid UTF-8 code")
+			return 0
 		}
 		L.Push(LNumberInt(int64(r)))
 		nargs++
@@ -160,7 +180,8 @@ func utf8CodesIter(L *LState) int {
 	pos0 := pos
 	r, size, ok := decodeCodePoint(str, pos0)
 	if !ok {
-		L.ArgError(1, fmt.Sprintf("invalid UTF-8 byte at position %d", pos+1))
+		L.RaiseError("invalid UTF-8 code")
+		return 0
 	}
 
 	data.pos += size
@@ -173,10 +194,6 @@ func utf8CodesIter(L *LState) int {
 // utf8Codes - utf8.codes(s)
 func utf8Codes(L *LState) int {
 	s := L.CheckString(1)
-
-	if !utf8.ValidString(s) {
-		L.ArgError(1, "invalid UTF-8 string")
-	}
 
 	// Создаём UserData для хранения состояния
 	ud := L.NewUserData()
@@ -253,45 +270,60 @@ func utf8Offset(L *LState) int {
 		}
 	}
 
-	i = luaIndex2StringIndex(s, i, true)
+	// Преобразуем отрицательные индексы
+	if i < 0 {
+		i = len(s) + i + 1
+	}
+
+	// Проверяем диапазон (1-based: от 1 до len(s)+1)
+	if i < 1 || i > len(s)+1 {
+		L.RaiseError("position out of range")
+		return 0
+	}
+
+	i = i - 1 // конвертируем в 0-based индекс
 
 	if n == 0 {
+		// Для пустой строки возвращаем 1
+		if len(s) == 0 {
+			L.Push(LNumberInt(1))
+			return 1
+		}
 		if i >= len(s) {
 			L.Push(LNil)
 			return 1
 		}
-		for i < len(s) && s[i]&0xC0 == 0x80 {
-			i++
-		}
-		if i >= len(s) {
-			L.Push(LNil)
-			return 1
+		// Если i указывает на байт продолжения, ищем начало символа
+		for i > 0 && s[i]&0xC0 == 0x80 {
+			i--
 		}
 		L.Push(LNumberInt(int64(i + 1)))
 		return 1
 	}
 
+	// Для n != 0, проверяем, что i не указывает на байт продолжения
+	if i < len(s) && s[i]&0xC0 == 0x80 {
+		L.RaiseError("continuation byte")
+		return 0
+	}
+
 	if n > 0 {
 		pos := i
+		n-- // не перемещаемся для 1-го символа
 		for n > 0 && pos < len(s) {
-			if pos > i && s[pos]&0xC0 == 0x80 {
+			// Перемещаемся к началу следующего символа
+			pos++
+			for pos < len(s) && s[pos]&0xC0 == 0x80 {
 				pos++
-				continue
 			}
-
-			_, size, ok := decodeCodePoint(s, pos)
-			if !ok {
-				L.Push(LNil)
-				return 1
-			}
-
 			n--
-			if n == 0 {
-				L.Push(LNumberInt(int64(pos + 1)))
-				return 1
-			}
-			pos += size
 		}
+		if n == 0 {
+			L.Push(LNumberInt(int64(pos + 1)))
+			return 1
+		}
+		L.Push(LNil)
+		return 1
 	} else {
 		pos := i - 1
 		if pos >= len(s) {
