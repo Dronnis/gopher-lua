@@ -72,6 +72,22 @@ func LVAsNumber(v LValue) LNumber {
 	return LNumberInt(0)
 }
 
+// LVAsNumberStrict tries to convert a given LValue to a number.
+// Returns the number and a boolean indicating success.
+// Used for bitwise operations where conversion failure should cause an error.
+func LVAsNumberStrict(v LValue) (LNumber, bool) {
+	switch lv := v.(type) {
+	case LNumber:
+		return lv, true
+	case LString:
+		if num, err := parseNumber(string(lv)); err == nil {
+			return num, true
+		}
+		return LNumberInt(0), false
+	}
+	return LNumberInt(0), false
+}
+
 type LNilType struct{}
 
 func (nl *LNilType) String() string   { return "nil" }

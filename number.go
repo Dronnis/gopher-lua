@@ -433,17 +433,23 @@ func (nm LNumber) Shl(other LNumber) LNumber {
 }
 
 // Shr performs bitwise right shift
-// Lua 5.3: shift amounts >= 64 result in 0 (for unsigned) or sign extension (for signed)
+// Lua 5.3: logical right shift (zero-fill, not sign-extending)
 func (nm LNumber) Shr(other LNumber) LNumber {
 	shift := other.Int64()
-	if shift >= 64 || shift <= -64 {
+	if shift >= 64 {
+		return LNumberInt(0) // All bits become 0 for large shifts
+	}
+	if shift <= -64 {
 		return LNumberInt(0)
 	}
 	if shift < 0 {
 		// Negative shift = left shift
 		return LNumberInt(nm.Int64() << uint(-shift))
 	}
-	return LNumberInt(nm.Int64() >> uint(shift))
+	// Logical right shift: treat as unsigned for the shift operation
+	uval := uint64(nm.Int64())
+	result := uval >> uint(shift)
+	return LNumberInt(int64(result))
 }
 
 // Bnot performs bitwise NOT

@@ -145,6 +145,41 @@ func isArrayKey(v LNumber) bool {
 func parseNumber(number string) (LNumber, error) {
 	number = strings.Trim(number, " \t\n")
 
+	// Handle negative numbers
+	isNegative := false
+	if strings.HasPrefix(number, "-") {
+		isNegative = true
+		number = number[1:]
+	}
+
+	// Check for hexadecimal float format (0x...)
+	if strings.HasPrefix(strings.ToLower(number), "0x") {
+		// Check if it contains a decimal point (hexadecimal float)
+		if strings.IndexByte(number, '.') >= 0 {
+			// Parse hexadecimal float manually
+			if v, err := parseHexFloat(number); err == nil {
+				if isNegative {
+					v = -v
+				}
+				return LNumberFloat(v), nil
+			}
+		} else {
+			// Try to parse as uint64 first, then convert to int64 using two's complement
+			if v, err := strconv.ParseUint(number, 0, 64); err == nil {
+				result := int64(v)
+				if isNegative {
+					result = -result
+				}
+				return LNumberInt(result), nil
+			}
+		}
+	}
+
+	// Restore negative sign for other parsing
+	if isNegative {
+		number = "-" + number
+	}
+
 	// Check if the number contains a decimal point or exponent
 	// If so, parse as float to preserve type information
 	hasDecimal := strings.IndexByte(number, '.') >= 0
@@ -168,6 +203,66 @@ func parseNumber(number string) (LNumber, error) {
 	}
 
 	return LNumberInt(0), fmt.Errorf("invalid number format: %s", number)
+}
+
+// parseHexFloat parses hexadecimal floating point numbers like 0xAA.5
+func parseHexFloat(s string) (float64, error) {
+	s = strings.ToLower(s)
+	if !strings.HasPrefix(s, "0x") {
+		return 0, fmt.Errorf("not a hex number")
+	}
+	
+	s = s[2:] // Remove "0x" prefix
+	
+	// Find decimal point
+	dotIndex := strings.IndexByte(s, '.')
+	if dotIndex == -1 {
+		return 0, fmt.Errorf("no decimal point found")
+	}
+	
+	integerPart := s[:dotIndex]
+	fractionalPart := s[dotIndex+1:]
+	
+	// Check for overflow in integer part - if it's too long, it might overflow
+	if len(integerPart) > 15 { // More than 15 hex digits would overflow float64 precision
+		return 0, fmt.Errorf("hex integer part too large")
+	}
+	
+	// Parse integer part
+	var intValue float64
+	if len(integerPart) > 0 {
+		for _, c := range integerPart {
+			var digit int
+			if c >= '0' && c <= '9' {
+				digit = int(c - '0')
+			} else if c >= 'a' && c <= 'f' {
+				digit = int(c - 'a' + 10)
+			} else {
+				return 0, fmt.Errorf("invalid hex digit: %c", c)
+			}
+			intValue = intValue*16 + float64(digit)
+		}
+	}
+	
+	// Parse fractional part
+	var fracValue float64
+	if len(fractionalPart) > 0 {
+		power := 1.0 / 16.0 // Start with 1/16 for first fractional digit
+		for _, c := range fractionalPart {
+			var digit int
+			if c >= '0' && c <= '9' {
+				digit = int(c - '0')
+			} else if c >= 'a' && c <= 'f' {
+				digit = int(c - 'a' + 10)
+			} else {
+				return 0, fmt.Errorf("invalid hex digit: %c", c)
+			}
+			fracValue += float64(digit) * power
+			power /= 16.0 // Next digit has 1/16 the weight
+		}
+	}
+	
+	return intValue + fracValue, nil
 }
 
 func popenArgs(arg string) (string, []string) {

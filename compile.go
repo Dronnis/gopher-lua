@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"strconv"
+	"strings"
 
 	"github.com/yuin/gopher-lua/ast"
 )
@@ -129,7 +131,16 @@ func lnumberValue(expr ast.Expr) (LNumber, bool) {
 	if ex, ok := expr.(*ast.NumberExpr); ok {
 		lv, err := parseNumber(ex.Value)
 		if err != nil {
-			lv = LNumberFloat(math.NaN())
+			// Для больших шестнадцатеричных чисел попробуем парсить как uint64
+			if strings.HasPrefix(strings.ToLower(ex.Value), "0x") {
+				if v, err2 := strconv.ParseUint(ex.Value, 0, 64); err2 == nil {
+					lv = LNumberInt(int64(v))
+				} else {
+					lv = LNumberFloat(math.NaN())
+				}
+			} else {
+				lv = LNumberFloat(math.NaN())
+			}
 		}
 		return lv, true
 	} else if ex, ok := expr.(*constLValueExpr); ok {
@@ -1202,7 +1213,16 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 	case *ast.NumberExpr:
 		num, err := parseNumber(ex.Value)
 		if err != nil {
-			num = LNumberFloat(math.NaN())
+			// Для больших шестнадцатеричных чисел попробуем парсить как uint64
+			if strings.HasPrefix(strings.ToLower(ex.Value), "0x") {
+				if v, err2 := strconv.ParseUint(ex.Value, 0, 64); err2 == nil {
+					num = LNumberInt(int64(v))
+				} else {
+					num = LNumberFloat(math.NaN())
+				}
+			} else {
+				num = LNumberFloat(math.NaN())
+			}
 		}
 		code.AddABx(OP_LOADK, sreg, context.ConstIndex(num), sline(ex))
 		return sused

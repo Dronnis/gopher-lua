@@ -872,11 +872,17 @@ func init() {
 			
 			// Lua 5.3: bitwise operations coerce strings to numbers
 			var nm LNumber
+			var ok bool
 			switch v := unaryv.(type) {
 			case LNumber:
 				nm = v
+				ok = true
 			case LString:
-				nm = LVAsNumber(unaryv)
+				nm, ok = LVAsNumberStrict(unaryv)
+				if !ok {
+					L.RaiseError("attempt to perform bitwise operation on a %v value", unaryv.Type().String())
+					return 0
+				}
 			default:
 				L.RaiseError("attempt to perform bitwise operation on a %v value", unaryv.Type().String())
 				return 0
@@ -2459,37 +2465,29 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 	rhs := L.rkValue(C)
 	// Lua 5.3: bitwise operations coerce strings to numbers
 	var v1, v2 LNumber
+	var ok1, ok2 bool
+
 	switch lv := lhs.(type) {
 	case LNumber:
 		v1 = lv
+		ok1 = true
 	case LString:
-		v1 = LVAsNumber(lhs)
+		v1, ok1 = LVAsNumberStrict(lhs)
 	default:
-		v := objectArith(L, opcode, lhs, rhs)
-		{
-			rg := reg
-			regi := RA
-			vali := v
-			newSize := regi + 1
-			{
-				requiredSize := newSize
-				if requiredSize > cap(rg.array) {
-					rg.resize(requiredSize)
-				}
-			}
-			rg.array[regi] = vali
-			if regi >= rg.top {
-				rg.top = regi + 1
-			}
-		}
-		return 0
+		ok1 = false
 	}
+
 	switch rv := rhs.(type) {
 	case LNumber:
 		v2 = rv
+		ok2 = true
 	case LString:
-		v2 = LVAsNumber(rhs)
+		v2, ok2 = LVAsNumberStrict(rhs)
 	default:
+		ok2 = false
+	}
+
+	if !ok1 || !ok2 {
 		v := objectArith(L, opcode, lhs, rhs)
 		{
 			rg := reg
@@ -2509,25 +2507,27 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 		}
 		return 0
 	}
+
+	// Both operands successfully converted to numbers
 	v := numberArith(L, opcode, v1, v2)
-	{
-		rg := reg
-		regi := RA
-		vali := v
-		newSize := regi + 1
 		{
-			requiredSize := newSize
-			if requiredSize > cap(rg.array) {
-				rg.resize(requiredSize)
+			rg := reg
+			regi := RA
+			vali := v
+			newSize := regi + 1
+			{
+				requiredSize := newSize
+				if requiredSize > cap(rg.array) {
+					rg.resize(requiredSize)
+				}
+			}
+			rg.array[regi] = vali
+			if regi >= rg.top {
+				rg.top = regi + 1
 			}
 		}
-		rg.array[regi] = rg.alloc.LNumber2I(vali)
-		if regi >= rg.top {
-			rg.top = regi + 1
-		}
+		return 0
 	}
-	return 0
-}
 
 func luaModulo(lhs, rhs LNumber) LNumber {
 	return lhs.Mod(rhs)

@@ -561,6 +561,8 @@ func parsePackFormat(format string) (*packFormat, error) {
 			size = 4
 		case 'j', 'J': // lua_Integer / lua_Unsigned
 			size = 8 // int64 в Go
+		case 'i', 'I': // int / unsigned int
+			size = 4
 		case 'T': // size_t
 			size = 8
 		case 'f': // float

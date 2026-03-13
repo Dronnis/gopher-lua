@@ -576,25 +576,28 @@ func baseToNumber(L *LState) int {
 		L.Push(lv)
 	case LString:
 		str := strings.Trim(string(lv), " \n\t")
-		if strings.Index(str, ".") > -1 {
-			if v, err := strconv.ParseFloat(str, 64); err != nil {
-				L.Push(LNil)
+		
+		// If no base is specified, use parseNumber for full support including hex floats
+		if noBase {
+			if num, err := parseNumber(str); err == nil {
+				L.Push(num)
 			} else {
-				L.Push(LNumberFloat(v))
+				L.Push(LNil)
 			}
 		} else {
-			// Check for hex prefix 0x or 0X
-			if noBase && strings.HasPrefix(strings.ToLower(str), "0x") {
-				base, str = 16, str[2:]
-			}
-			// Also check for standalone hex numbers like "0xF"
-			if noBase && len(str) > 1 && str[0] == '0' && (str[1] == 'x' || str[1] == 'X') {
-				base, str = 16, str[2:]
-			}
-			if v, err := strconv.ParseInt(str, base, 64); err != nil {
-				L.Push(LNil)
+			// Base is specified, use original logic for integer parsing
+			if strings.Index(str, ".") > -1 {
+				if v, err := strconv.ParseFloat(str, 64); err != nil {
+					L.Push(LNil)
+				} else {
+					L.Push(LNumberFloat(v))
+				}
 			} else {
-				L.Push(LNumberInt(v))
+				if v, err := strconv.ParseInt(str, base, 64); err != nil {
+					L.Push(LNil)
+				} else {
+					L.Push(LNumberInt(v))
+				}
 			}
 		}
 	default:
