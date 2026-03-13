@@ -585,7 +585,13 @@ func baseToNumber(L *LState) int {
 				L.Push(LNil)
 			}
 		} else {
-			// Base is specified, use original logic for integer parsing
+			// Base is specified
+			// For base != 16, reject hexadecimal prefix 0x
+			if base != 16 && strings.HasPrefix(strings.ToLower(str), "0x") {
+				L.Push(LNil)
+				return 1
+			}
+			
 			if strings.Index(str, ".") > -1 {
 				if v, err := strconv.ParseFloat(str, base); err != nil {
 					L.Push(LNil)
