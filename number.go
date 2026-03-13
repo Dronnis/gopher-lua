@@ -378,20 +378,48 @@ func (nm LNumber) ToFloat() float64 {
 	return nm.Float64()
 }
 
-// Floor returns the floor of the number as integer
+// Floor returns the floor of the number as integer if possible, otherwise as float
 func (nm LNumber) Floor() LNumber {
 	if nm.IsInteger() {
 		return nm
 	}
-	return LNumberInt(int64(math.Floor(nm.Float64())))
+	floored := math.Floor(nm.Float64())
+	// Check if the result fits in int64
+	// Use strict comparison to avoid overflow during conversion
+	// math.MaxInt64 as float64 is 9.223372036854776e+18, which is slightly larger than actual MaxInt64
+	// So we need to check if the floored value can be safely converted
+	if !math.IsInf(floored, 0) && !math.IsNaN(floored) {
+		// Try to convert and check if it's safe
+		if floored >= -9.223372036854775808e+18 && floored < 9.223372036854775808e+18 {
+			intVal := int64(floored)
+			// Verify the conversion didn't overflow
+			if float64(intVal) == floored {
+				return LNumberInt(intVal)
+			}
+		}
+	}
+	return LNumberFloat(floored)
 }
 
-// Ceil returns the ceiling of the number as integer
+// Ceil returns the ceiling of the number as integer if possible, otherwise as float
 func (nm LNumber) Ceil() LNumber {
 	if nm.IsInteger() {
 		return nm
 	}
-	return LNumberInt(int64(math.Ceil(nm.Float64())))
+	ceiled := math.Ceil(nm.Float64())
+	// Check if the result fits in int64
+	// Use strict comparison to avoid overflow during conversion
+	if !math.IsInf(ceiled, 0) && !math.IsNaN(ceiled) {
+		// Try to convert and check if it's safe
+		if ceiled >= -9.223372036854775808e+18 && ceiled < 9.223372036854775808e+18 {
+			intVal := int64(ceiled)
+			// Verify the conversion didn't overflow
+			if float64(intVal) == ceiled {
+				return LNumberInt(intVal)
+			}
+		}
+	}
+	return LNumberFloat(ceiled)
 }
 
 // Abs returns the absolute value

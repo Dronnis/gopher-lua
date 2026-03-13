@@ -81,7 +81,15 @@ func mathAsin(L *LState) int {
 
 func mathAtan(L *LState) int {
 	v := L.CheckNumber(1)
-	L.Push(LNumberFloat(math.Atan(v.Float64())))
+	// Lua 5.3: math.atan can accept optional second argument
+	// math.atan(y) returns atan(y)
+	// math.atan(y, x) returns atan2(y, x)
+	if L.GetTop() >= 2 {
+		v2 := L.CheckNumber(2)
+		L.Push(LNumberFloat(math.Atan2(v.Float64(), v2.Float64())))
+	} else {
+		L.Push(LNumberFloat(math.Atan(v.Float64())))
+	}
 	return 1
 }
 
@@ -304,7 +312,28 @@ func mathTanh(L *LState) int {
 
 // math.tointeger converts a number to integer if possible
 func mathToInteger(L *LState) int {
-	v := L.CheckNumber(1)
+	// Lua 5.3: accepts numbers and strings, returns nil for invalid values
+	arg := L.Get(1)
+	
+	// Try to convert to number first (handles both numbers and numeric strings)
+	var v LNumber
+	switch val := arg.(type) {
+	case LNumber:
+		v = val
+	case LString:
+		// Try to parse string as number
+		num, err := parseNumber(string(val))
+		if err != nil {
+			L.Push(LNil)
+			return 1
+		}
+		v = num
+	default:
+		// Not a number or string, return nil
+		L.Push(LNil)
+		return 1
+	}
+	
 	if v.IsInteger() {
 		L.Push(v)
 	} else {
