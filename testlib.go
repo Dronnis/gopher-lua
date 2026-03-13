@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"fmt"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -45,6 +46,8 @@ var testFuncs = map[string]LGFunction{
 	"func2num":    testFunc2Num,
 	"objsize":     testObjSize,
 	"checkstack":  testCheckStack,
+	"listk":       testListK,
+	"listcode":    testListCode,
 }
 
 // T.totalmem() -> total, blocks, maxmem
@@ -699,4 +702,237 @@ func parseIndex(s string, top int) int {
 		return top + idx + 1
 	}
 	return idx
+}
+
+// T.listk(func) -> list of constants
+func testListK(L *LState) int {
+	fn := L.CheckFunction(1)
+	
+	// Получаем прототип функции
+	var proto *FunctionProto
+	if fn.IsG {
+		// G-функции не имеют байт-кода
+		L.Push(L.NewTable())
+		return 1
+	}
+	proto = fn.Proto
+	
+	// Создаём таблицу констант
+	klist := L.NewTable()
+	for i, k := range proto.Constants {
+		klist.RawSetInt(i+1, k)
+	}
+	
+	L.Push(klist)
+	return 1
+}
+
+// T.listcode(func) -> list of code instructions
+func testListCode(L *LState) int {
+	fn := L.CheckFunction(1)
+	
+	// Получаем прототип функции
+	var proto *FunctionProto
+	if fn.IsG {
+		// G-функции не имеют байт-кода
+		L.Push(L.NewTable())
+		return 1
+	}
+	proto = fn.Proto
+	
+	// Создаём таблицу инструкций
+	codelist := L.NewTable()
+	for i, code := range proto.Code {
+		op := getOpCode(code)
+		argA := getArgA(code)
+		argB := getArgB(code)
+		argC := getArgC(code)
+		argBx := getArgBx(code)
+		argSbx := getArgSbx(code)
+		
+		// Форматируем в зависимости от типа инструкции
+		format := getOpFormat(op)
+		var instr string
+		switch format {
+		case "ABx":
+			instr = fmt.Sprintf("%d - %s %d %d", i+1, opcodeName(op), argA, argBx)
+		case "AsBx":
+			instr = fmt.Sprintf("%d - %s %d %d", i+1, opcodeName(op), argA, argSbx)
+		case "Ax":
+			instr = fmt.Sprintf("%d - %s %d", i+1, opcodeName(op), getArgAx(code))
+		default:
+			instr = fmt.Sprintf("%d - %s %d %d %d", i+1, opcodeName(op), argA, argB, argC)
+		}
+		
+		codelist.RawSetInt(i+1, LString(instr))
+	}
+	
+	L.Push(codelist)
+	return 1
+}
+
+// opcodeName возвращает имя опкода
+func opcodeName(op int) string {
+	switch op {
+	case OP_MOVE:
+		return "MOVE"
+	case OP_MOVEN:
+		return "MOVEN"
+	case OP_LOADK:
+		return "LOADK"
+	case OP_LOADKX:
+		return "LOADKX"
+	case OP_LOADBOOL:
+		return "LOADBOOL"
+	case OP_LOADNIL:
+		return "LOADNIL"
+	case OP_GETUPVAL:
+		return "GETUPVAL"
+	case OP_SETUPVAL:
+		return "SETUPVAL"
+	case OP_GETTABUP:
+		return "GETTABUP"
+	case OP_GETTABLE:
+		return "GETTABLE"
+	case OP_GETTABLEKS:
+		return "GETTABLEKS"
+	case OP_SETTABUP:
+		return "SETTABUP"
+	case OP_SETTABLE:
+		return "SETTABLE"
+	case OP_SETTABLEKS:
+		return "SETTABLEKS"
+	case OP_NEWTABLE:
+		return "NEWTABLE"
+	case OP_SELF:
+		return "SELF"
+	case OP_ADD:
+		return "ADD"
+	case OP_SUB:
+		return "SUB"
+	case OP_MUL:
+		return "MUL"
+	case OP_MOD:
+		return "MOD"
+	case OP_POW:
+		return "POW"
+	case OP_DIV:
+		return "DIV"
+	case OP_IDIV:
+		return "IDIV"
+	case OP_BAND:
+		return "BAND"
+	case OP_BOR:
+		return "BOR"
+	case OP_BXOR:
+		return "BXOR"
+	case OP_SHL:
+		return "SHL"
+	case OP_SHR:
+		return "SHR"
+	case OP_BNOT:
+		return "BNOT"
+	case OP_UNM:
+		return "UNM"
+	case OP_NOT:
+		return "NOT"
+	case OP_LEN:
+		return "LEN"
+	case OP_CONCAT:
+		return "CONCAT"
+	case OP_JMP:
+		return "JMP"
+	case OP_EQ:
+		return "EQ"
+	case OP_LT:
+		return "LT"
+	case OP_LE:
+		return "LE"
+	case OP_TEST:
+		return "TEST"
+	case OP_TESTSET:
+		return "TESTSET"
+	case OP_CALL:
+		return "CALL"
+	case OP_TAILCALL:
+		return "TAILCALL"
+	case OP_RETURN:
+		return "RETURN"
+	case OP_FORLOOP:
+		return "FORLOOP"
+	case OP_FORPREP:
+		return "FORPREP"
+	case OP_TFORCALL:
+		return "TFORCALL"
+	case OP_TFORLOOP:
+		return "TFORLOOP"
+	case OP_SETLIST:
+		return "SETLIST"
+	case OP_CLOSURE:
+		return "CLOSURE"
+	case OP_VARARG:
+		return "VARARG"
+	case OP_EXTRAARG:
+		return "EXTRAARG"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// getOpCode извлекает опкод из инструкции
+func getOpCode(inst uint32) int {
+	return int(inst >> 26)
+}
+
+// getArgA извлекает аргумент A
+func getArgA(inst uint32) int {
+	return int(inst>>18) & 0xff
+}
+
+// getArgB извлекает аргумент B
+func getArgB(inst uint32) int {
+	return int(inst & 0x1ff)
+}
+
+// getArgC извлекает аргумент C
+func getArgC(inst uint32) int {
+	return int(inst>>9) & 0x1ff
+}
+
+// getArgBx извлекает аргумент Bx
+func getArgBx(inst uint32) int {
+	return int(inst & 0x3ffff)
+}
+
+// getArgSbx извлекает аргумент sBx
+func getArgSbx(inst uint32) int {
+	return getArgBx(inst) - 131071
+}
+
+// getArgAx извлекает аргумент Ax
+func getArgAx(inst uint32) int {
+	return int(inst & 0x3ffffff)
+}
+
+// getOpProp возвращает свойства опкода
+func getOpProp(op int) opProp {
+	if op >= 0 && op < len(opProps) {
+		return opProps[op]
+	}
+	return opProp{}
+}
+
+// getOpFormat возвращает формат опкода
+func getOpFormat(op int) string {
+	prop := getOpProp(op)
+	switch prop.Type {
+	case opTypeABx:
+		return "ABx"
+	case opTypeASbx:
+		return "AsBx"
+	case opTypeAx:
+		return "Ax"
+	default:
+		return "ABC"
+	}
 }
