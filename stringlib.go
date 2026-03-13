@@ -26,22 +26,22 @@ func OpenString(L *LState) int {
 }
 
 var strFuncs = map[string]LGFunction{
-	"byte":    strByte,
-	"char":    strChar,
-	"dump":    strDump,
-	"find":    strFind,
-	"format":  strFormat,
-	"gsub":    strGsub,
-	"len":     strLen,
-	"lower":   strLower,
-	"match":   strMatch,
-	"pack":    strPack,
+	"byte":     strByte,
+	"char":     strChar,
+	"dump":     strDump,
+	"find":     strFind,
+	"format":   strFormat,
+	"gsub":     strGsub,
+	"len":      strLen,
+	"lower":    strLower,
+	"match":    strMatch,
+	"pack":     strPack,
 	"packsize": strPackSize,
-	"rep":     strRep,
-	"reverse": strReverse,
-	"sub":     strSub,
-	"unpack":  strUnpack,
-	"upper":   strUpper,
+	"rep":      strRep,
+	"reverse":  strReverse,
+	"sub":      strSub,
+	"unpack":   strUnpack,
+	"upper":    strUpper,
 }
 
 func strByte(L *LState) int {
@@ -105,7 +105,7 @@ func strFind(L *LState) int {
 	str := L.CheckString(1)
 	pattern := L.CheckString(2)
 	init := L.OptInt(3, 1)
-	
+
 	// Преобразуем init в 0-based индекс
 	if init < 0 {
 		init = len(str) + init + 1
@@ -114,7 +114,7 @@ func strFind(L *LState) int {
 		init = init - 1
 	}
 	init = intMax(0, init)
-	
+
 	// Проверяем, что init в пределах строки
 	if init >= len(str) && len(str) > 0 {
 		L.Push(LNil)
@@ -124,7 +124,7 @@ func strFind(L *LState) int {
 		L.Push(LNil)
 		return 1
 	}
-	
+
 	if len(pattern) == 0 {
 		// Пустой паттерн匹配 на позиции init+1
 		L.Push(LNumberInt(int64(init + 1)))
@@ -183,6 +183,9 @@ func strFormat(L *LState) int {
 func strGsub(L *LState) int {
 	str := L.CheckString(1)
 	pat := L.CheckString(2)
+	if L.GetTop() < 3 {
+		L.ArgError(3, "string, table or function expected, got nil")
+	}
 	L.CheckTypes(3, LTString, LTTable, LTFunction)
 	repl := L.CheckAny(3)
 	limit := L.OptInt(4, -1)
@@ -214,11 +217,11 @@ type replaceInfo struct {
 }
 
 func checkCaptureIndex(L *LState, m *pm.MatchData, idx int) {
-	if idx <= 2 {
+	if idx <= 2 && idx > 0 {
 		return
 	}
 	if idx >= m.CaptureLength() {
-		L.RaiseError("invalid capture index")
+		L.RaiseError("invalid capture index %%%d", idx/2)
 	}
 }
 
@@ -262,10 +265,14 @@ func strGsubStr(L *LState, str string, repl string, matches []*pm.MatchData) str
 			if !sc.ChangeFlag {
 				if sc.HasFlag {
 					if c >= '0' && c <= '9' {
-						sc.AppendString(capturedString(L, match, str, 2*(int(c)-48)))
-					} else {
+						idx := 2 * (int(c) - 48)
+						sc.AppendString(capturedString(L, match, str, idx))
+					} else if c == '%' {
 						sc.AppendChar('%')
-						sc.AppendChar(c)
+					} else {
+						// Для сообщения с одним '%' используем форматирование %s
+						ls := L
+						ls.raiseError(1, "invalid use of '%s'", "%")
 					}
 					sc.HasFlag = false
 				} else {
@@ -293,6 +300,10 @@ func strGsubTable(L *LState, str string, repl *LTable, matches []*pm.MatchData) 
 			value = L.GetField(repl, str[match.Capture(idx):match.Capture(idx+1)])
 		}
 		if !LVIsFalse(value) {
+			// Lua 5.3: таблицы и функции не могут быть использованы как строки замены
+			if !LVCanConvToString(value) {
+				L.RaiseError("invalid replacement value (a %s)", value.Type().String())
+			}
 			infoList = append(infoList, replaceInfo{[]int{match.Capture(0), match.Capture(1)}, LVAsString(value)})
 		}
 	}
@@ -321,6 +332,10 @@ func strGsubFunc(L *LState, str string, repl *LFunction, matches []*pm.MatchData
 		L.Call(nargs, 1)
 		ret := L.reg.Pop()
 		if !LVIsFalse(ret) {
+			// Lua 5.3: таблицы и функции не могут быть использованы как строки замены
+			if !LVCanConvToString(ret) {
+				L.RaiseError("invalid replacement value (a %s)", ret.Type().String())
+			}
 			infoList = append(infoList, replaceInfo{[]int{start, end}, LVAsString(ret)})
 		}
 	}
@@ -342,11 +357,11 @@ func strGmatchIter(L *LState) int {
 	matches := md.matches
 	idx := md.pos
 	md.pos += 1
-	
+
 	if idx >= len(matches) {
 		return 0
 	}
-	
+
 	match := matches[idx]
 	if match.CaptureLength() == 2 {
 		L.Push(LString(str[match.Capture(0):match.Capture(1)]))
@@ -370,11 +385,11 @@ func strGmatch(L *LState) int {
 	if err != nil {
 		L.RaiseError(err.Error())
 	}
-	
+
 	// Создаём match data
 	ud := L.NewUserData()
 	ud.Value = &strMatchData{str, 0, mds}
-	
+
 	// Создаём closure с match data в upvalue
 	// В Lua 5.3 string.gmatch возвращает closure с 2 upvalues: state и var
 	// Для совместимости создаём closure с 1 upvalue (match data)
@@ -449,14 +464,14 @@ func strRep(L *LState) int {
 	maxSize := 1<<31 - 1
 	strLen := len(str)
 	sepLen := len(sep)
-	
+
 	// Вычисляем общий размер результата: n*strLen + (n-1)*sepLen
 	// Используем int64 для предотвращения переполнения при вычислении
-	totalSize := int64(strLen)*int64(n)
+	totalSize := int64(strLen) * int64(n)
 	if sepLen > 0 && n > 1 {
-		totalSize += int64(sepLen)*int64(n-1)
+		totalSize += int64(sepLen) * int64(n-1)
 	}
-	
+
 	if totalSize > int64(maxSize) {
 		L.RaiseError("too large")
 		return 0
@@ -495,14 +510,14 @@ func strSub(L *LState) int {
 	start := luaIndex2StringIndex(str, L.CheckInt(2), true)
 	end := luaIndex2StringIndex(str, L.OptInt(3, -1), false)
 	l := len(str)
-	
+
 	// Если start >= l или end < start, возвращаем пустую строку
 	if start >= l || end < start {
 		L.Push(emptyLString)
 	} else {
 		// В Lua end включается, а в Go срез не включает end, поэтому end+1
 		// Но end уже 0-based индекс, поэтому end+1
-		L.Push(LString(str[start:end+1]))
+		L.Push(LString(str[start : end+1]))
 	}
 	return 1
 }
@@ -525,9 +540,9 @@ const (
 
 // packFormat описывает опции форматирования
 type packFormat struct {
-	endian    byte
-	align     int
-	options   []packOption
+	endian  byte
+	align   int
+	options []packOption
 }
 
 // packOption - отдельная опция упаковки
@@ -921,9 +936,9 @@ func strPack(L *LState) int {
 			case 'j', 'J', 'T': // int64 / uint64
 				uvalue = uint64(value)
 			case 'f': // float
-				uvalue = uint64(math.Float32bits(float32(L.Get(argIdx-1).(LNumber).Float64())))
+				uvalue = uint64(math.Float32bits(float32(L.Get(argIdx - 1).(LNumber).Float64())))
 			case 'd', 'n': // double
-				uvalue = math.Float64bits(L.Get(argIdx-1).(LNumber).Float64())
+				uvalue = math.Float64bits(L.Get(argIdx - 1).(LNumber).Float64())
 			}
 
 			writeEndian(buf, pos, uvalue, opt.size, pf.endian)
@@ -1064,7 +1079,7 @@ func strUnpack(L *LState) int {
 					mask = (mask << 8) | 0xff
 				}
 				signBit := uint64(1) << (opt.size*8 - 1)
-				
+
 				if uvalue&signBit != 0 {
 					// Отрицательное число - sign extend
 					signed = int64(uvalue | ^mask)
@@ -1148,7 +1163,7 @@ func strPackSize(L *LState) int {
 
 func luaIndex2StringIndex(str string, i int, start bool) int {
 	l := len(str)
-	
+
 	// Обработка отрицательных индексов
 	if i < 0 {
 		// Для очень больших отрицательных чисел (например, math.mininteger)
@@ -1191,7 +1206,7 @@ func luaIndex2StringIndex(str string, i int, start bool) int {
 			i = i - 1
 		}
 	}
-	
+
 	i = intMax(0, i)
 	// Ограничиваем end индексом последнего символа
 	if !start && i >= l && l > 0 {

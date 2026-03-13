@@ -8,6 +8,10 @@ import (
 const EOS = -1
 const _UNKNOWN = -2
 
+// Maximum pattern complexity to prevent ReDoS attacks
+// This limit is similar to Lua 5.3's MAXCCHECKS
+const MAX_PATTERN_COMPLEXITY = 100000
+
 /* Error {{{ */
 
 type Error struct {
@@ -207,6 +211,9 @@ func (pn *singleClass) Matches(ch int) bool {
 		ret = (0x00 <= ch && ch <= 0x1F) || ch == 0x7F
 	case 'd', 'D':
 		ret = '0' <= ch && ch <= '9'
+	case 'g', 'G':
+		// printable characters except space (ASCII 33-126)
+		ret = 0x21 <= ch && ch <= 0x7E
 	case 'l', 'L':
 		ret = 'a' <= ch && ch <= 'z'
 	case 'p', 'P':
@@ -374,7 +381,7 @@ exit:
 	return set
 }
 
-func parsePattern(sc *scanner, toplevel bool) *seqPattern {
+func parsePattern(sc *scanner, toplevel bool, inCapture bool) *seqPattern {
 	pat := &seqPattern{}
 	if toplevel {
 		if sc.Peek() == '^' {
@@ -390,8 +397,13 @@ func parsePattern(sc *scanner, toplevel bool) *seqPattern {
 			sc.Next()
 			switch sc.Peek() {
 			case '0':
-				panic(newError(sc.CurrentPos(), "invalid capture index"))
+				sc.Next()
+				panic(newError(sc.CurrentPos(), "invalid capture index %0"))
 			case '1', '2', '3', '4', '5', '6', '7', '8', '9':
+				if inCapture {
+					digit := sc.Next()
+					panic(newError(sc.CurrentPos(), "invalid capture index %%%c", digit))
+				}
 				pat.Patterns = append(pat.Patterns, &numberPattern{sc.Next() - 48})
 			case 'b':
 				sc.Next()
@@ -415,7 +427,7 @@ func parsePattern(sc *scanner, toplevel bool) *seqPattern {
 				sc.Next()
 				pat.Patterns = append(pat.Patterns, &posCapPattern{})
 			} else {
-				ret := &capPattern{parsePattern(sc, false)}
+				ret := &capPattern{parsePattern(sc, false, true)}
 				if sc.Peek() != ')' {
 					panic(newError(sc.CurrentPos(), "unfinished capture"))
 				}
@@ -616,17 +628,30 @@ func Find(p string, src []byte, offset, limit int) (matches []*MatchData, err er
 			}
 		}
 	}()
-	pat := parsePattern(newScanner([]byte(p)), true)
+	pat := parsePattern(newScanner([]byte(p)), true, false)
 	insts := compilePattern(pat)
+	// Check pattern complexity to prevent ReDoS attacks
+	if len(insts) > MAX_PATTERN_COMPLEXITY {
+		return nil, newError(_UNKNOWN, "too complex")
+	}
 	matches = []*MatchData{}
+	lastEnd := -1 // последняя позиция конца совпадения
 	for sp := offset; sp <= len(src); {
 		ok, nsp, ms := recursiveVM(src, insts, 0, sp)
-		sp++
 		if ok {
+			// Lua 5.3.3: пропускаем пустые совпадения, которые начинаются там же, где закончилось предыдущее
+			if nsp > sp || sp > lastEnd {
+				matches = append(matches, ms)
+				lastEnd = nsp
+			}
 			if sp < nsp {
 				sp = nsp
+			} else {
+				// после пустого совпадения нужно пропустить один символ
+				sp++
 			}
-			matches = append(matches, ms)
+		} else {
+			sp++
 		}
 		if len(matches) == limit || pat.MustHead {
 			break

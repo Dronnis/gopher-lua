@@ -3,11 +3,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/chzyer/readline"
-	"github.com/yuin/gopher-lua"
-	"github.com/yuin/gopher-lua/parse"
 	"os"
 	"runtime/pprof"
+
+	"github.com/chzyer/readline"
+	lua "github.com/yuin/gopher-lua"
+	"github.com/yuin/gopher-lua/parse"
 )
 
 func main() {
@@ -54,7 +55,10 @@ Available options are:
 
 	status := 0
 
-	L := lua.NewState()
+	L := lua.NewState(lua.Options{
+		CallStackSize: 1024,
+		RegistrySize:  1024 * 20,
+	})
 	defer L.Close()
 	L.OpenLibs()
 	if opt_m > 0 {
