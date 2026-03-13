@@ -140,8 +140,20 @@ func mathFmod(L *LState) int {
 	v1 := L.CheckNumber(1)
 	v2 := L.CheckNumber(2)
 	// fmod is different from modulo - it's the remainder of division
-	r := math.Mod(v1.Float64(), v2.Float64())
-	L.Push(LNumberFloat(r))
+	// Lua 5.3: if both arguments are integers, return integer
+	if v1.IsInteger() && v2.IsInteger() {
+		i1 := v1.Int64()
+		i2 := v2.Int64()
+		if i2 == 0 {
+			L.RaiseError("zero")
+		}
+		// Integer fmod: same as C fmod for integers
+		result := i1 % i2
+		L.Push(LNumberInt(result))
+	} else {
+		r := math.Mod(v1.Float64(), v2.Float64())
+		L.Push(LNumberFloat(r))
+	}
 	return 1
 }
 
@@ -177,14 +189,21 @@ func mathLog10(L *LState) int {
 
 func mathMax(L *LState) int {
 	if L.GetTop() == 0 {
-		L.RaiseError("wrong number of arguments")
+		L.RaiseError("value expected")
 	}
 	max := L.CheckNumber(1)
 	top := L.GetTop()
 	for i := 2; i <= top; i++ {
 		v := L.CheckNumber(i)
-		if v.Float64() > max.Float64() {
-			max = v
+		// Lua 5.3: preserve integer type when possible
+		if max.IsInteger() && v.IsInteger() {
+			if v.Int64() > max.Int64() {
+				max = v
+			}
+		} else {
+			if v.Float64() > max.Float64() {
+				max = v
+			}
 		}
 	}
 	L.Push(max)
@@ -193,14 +212,21 @@ func mathMax(L *LState) int {
 
 func mathMin(L *LState) int {
 	if L.GetTop() == 0 {
-		L.RaiseError("wrong number of arguments")
+		L.RaiseError("value expected")
 	}
 	min := L.CheckNumber(1)
 	top := L.GetTop()
 	for i := 2; i <= top; i++ {
 		v := L.CheckNumber(i)
-		if v.Float64() < min.Float64() {
-			min = v
+		// Lua 5.3: preserve integer type when possible
+		if min.IsInteger() && v.IsInteger() {
+			if v.Int64() < min.Int64() {
+				min = v
+			}
+		} else {
+			if v.Float64() < min.Float64() {
+				min = v
+			}
 		}
 	}
 	L.Push(min)

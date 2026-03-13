@@ -13,11 +13,9 @@ func LNumberInt(v int64) LNumber {
 
 // LNumberFloat creates a float LNumber
 func LNumberFloat(v float64) LNumber {
-	// Normalize -0.0 to 0.0 for consistent table key behavior
-	// In Lua, -0.0 == 0.0 and they should be the same table key
-	if v == 0 && math.Signbit(v) {
-		return LNumber{value: luaFloatType(0)}
-	}
+	// Lua 5.3: -0.0 and 0.0 are equal (==) and should be the same table key,
+	// The sign of zero is preserved for mathematical operations
+	// Note: Go's literal -0.0 doesn't preserve sign, but strconv.ParseFloat("-0.0") does
 	return LNumber{value: luaFloatType(v)}
 }
 
@@ -491,16 +489,9 @@ func (nm LNumber) Div(other LNumber) LNumber {
 	a := nm.Float64()
 	b := other.Float64()
 	// Lua 5.3: division by zero returns inf (not error)
-	if b == 0 {
-		if a == 0 {
-			return LNumberFloat(math.NaN())  // 0/0 = NaN
-		}
-		// Return +inf or -inf based on signs
-		if (a < 0) != (b < 0) {
-			return LNumberFloat(math.Inf(-1))
-		}
-		return LNumberFloat(math.Inf(1))
-	}
+	// Note: Go's float64 division handles signed zero correctly:
+	// 1.0 / 0.0 = +Inf, 1.0 / -0.0 = -Inf
+	// So we can just use Go's division directly
 	result := a / b
 	return LNumberFloat(result)
 }

@@ -567,8 +567,27 @@ func (fc *funcContext) GetLabelPc(label int) int {
 func (fc *funcContext) ConstIndex(value LValue) int {
 	ctype := value.Type()
 	for i, lv := range fc.Proto.Constants {
-		if lv.Type() == ctype && lv == value {
-			return i
+		if lv.Type() == ctype {
+			// Special handling for numbers: distinguish between 0.0 and -0.0
+			if ctype == LTNumber {
+				lvNum, _ := lv.(LNumber)
+				valNum, _ := value.(LNumber)
+				// Check if both are floats and both are zero
+				if !lvNum.IsInteger() && !valNum.IsInteger() {
+					lvFloat := lvNum.Float64()
+					valFloat := valNum.Float64()
+					if lvFloat == 0 && valFloat == 0 {
+						// Both are zero, check sign
+						if math.Signbit(lvFloat) == math.Signbit(valFloat) {
+							return i
+						}
+						continue // Different signs, keep looking
+					}
+				}
+			}
+			if lv == value {
+				return i
+			}
 		}
 	}
 	fc.Proto.Constants = append(fc.Proto.Constants, value)
