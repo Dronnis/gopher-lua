@@ -104,12 +104,33 @@ func strDump(L *LState) int {
 func strFind(L *LState) int {
 	str := L.CheckString(1)
 	pattern := L.CheckString(2)
+	init := L.OptInt(3, 1)
+	
+	// Преобразуем init в 0-based индекс
+	if init < 0 {
+		init = len(str) + init + 1
+	}
+	if init > 0 {
+		init = init - 1
+	}
+	init = intMax(0, init)
+	
+	// Проверяем, что init в пределах строки
+	if init >= len(str) && len(str) > 0 {
+		L.Push(LNil)
+		return 1
+	}
+	if len(str) == 0 && init > 0 {
+		L.Push(LNil)
+		return 1
+	}
+	
 	if len(pattern) == 0 {
-		L.Push(LNumberInt(1))
+		// Пустой паттерн匹配 на позиции init+1
+		L.Push(LNumberInt(int64(init + 1)))
 		L.Push(LNumberInt(0))
 		return 2
 	}
-	init := luaIndex2StringIndex(str, L.OptInt(3, 1), true)
 	plain := false
 	if L.GetTop() == 4 {
 		plain = LVAsBool(L.Get(4))
@@ -417,16 +438,36 @@ func strRep(L *LState) int {
 	str := L.CheckString(1)
 	n := L.CheckInt(2)
 	sep := L.OptString(3, "")
-	
+
 	if n <= 0 {
 		L.Push(emptyLString)
-	} else if sep == "" {
+		return 1
+	}
+
+	// Проверяем на переполнение
+	// Максимальный размер строки в Go - maxInt
+	maxSize := 1<<31 - 1
+	strLen := len(str)
+	sepLen := len(sep)
+	
+	// Вычисляем общий размер результата: n*strLen + (n-1)*sepLen
+	// Используем int64 для предотвращения переполнения при вычислении
+	totalSize := int64(strLen)*int64(n)
+	if sepLen > 0 && n > 1 {
+		totalSize += int64(sepLen)*int64(n-1)
+	}
+	
+	if totalSize > int64(maxSize) {
+		L.RaiseError("too large")
+		return 0
+	}
+
+	if sep == "" {
 		// Без разделителя - просто повторяем строку
 		L.Push(LString(strings.Repeat(str, n)))
 	} else {
 		// С разделителем - вставляем между повторениями
-		// Для n повторений нужно n-1 разделителей
-		result := make([]byte, 0, len(str)*n+len(sep)*(n-1))
+		result := make([]byte, 0, totalSize)
 		for i := 0; i < n; i++ {
 			if i > 0 {
 				result = append(result, sep...)
@@ -454,10 +495,14 @@ func strSub(L *LState) int {
 	start := luaIndex2StringIndex(str, L.CheckInt(2), true)
 	end := luaIndex2StringIndex(str, L.OptInt(3, -1), false)
 	l := len(str)
+	
+	// Если start >= l или end < start, возвращаем пустую строку
 	if start >= l || end < start {
 		L.Push(emptyLString)
 	} else {
-		L.Push(LString(str[start:end]))
+		// В Lua end включается, а в Go срез не включает end, поэтому end+1
+		// Но end уже 0-based индекс, поэтому end+1
+		L.Push(LString(str[start:end+1]))
 	}
 	return 1
 }
@@ -971,16 +1016,55 @@ func strPackSize(L *LState) int {
 // }}}
 
 func luaIndex2StringIndex(str string, i int, start bool) int {
-	if start && i != 0 {
-		i -= 1
-	}
 	l := len(str)
+	
+	// Обработка отрицательных индексов
 	if i < 0 {
+		// Для очень больших отрицательных чисел (например, math.mininteger)
+		if i < -l {
+			// Возвращаем 0 для start, -1 для end (чтобы start > end)
+			if start {
+				return 0
+			}
+			return -1
+		}
+		// i = l + i + 1 (1-based индекс)
 		i = l + i + 1
+		if i < 0 {
+			// Индекс за пределами строки
+			if start {
+				return 0
+			}
+			return -1
+		}
+		if i == 0 {
+			// Индекс 0 (перед первым символом)
+			if start {
+				return 0
+			}
+			return -1
+		}
+		// Преобразуем 1-based в 0-based
+		i = i - 1
+	} else {
+		// Для положительных индексов (включая 0)
+		// В Lua индекс 0 означает позицию перед первым символом
+		if i == 0 {
+			// Для start возвращаем 0, для end возвращаем -1 (чтобы start > end)
+			if start {
+				i = 0
+			} else {
+				return -1
+			}
+		} else {
+			i = i - 1
+		}
 	}
+	
 	i = intMax(0, i)
-	if !start && i > l {
-		i = l
+	// Ограничиваем end индексом последнего символа
+	if !start && i >= l && l > 0 {
+		i = l - 1
 	}
 	return i
 }
