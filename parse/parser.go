@@ -3,13 +3,11 @@
 //line parser.go.y:2
 package parse
 
-import __yyfmt__ "fmt"
-
-//line parser.go.y:2
-
 import (
+	__yyfmt__ "fmt"
+
 	"github.com/yuin/gopher-lua/ast"
-)
+) //line parser.go.y:2
 
 //line parser.go.y:35
 type yySymType struct {
@@ -460,7 +458,14 @@ func yyErrorMessage(state, lookAhead int) string {
 	}
 
 	// Lua 5.3 compatible error message format
-	res := "unexpected symbol near '" + yyTokname(lookAhead) + "'"
+	lookAheadName := yyTokname(lookAhead)
+	// Replace $end with <eof> for Lua 5.3 compatibility
+	if lookAheadName == "$end" {
+		lookAheadName = "<eof>"
+		// For EOF, just return the basic message without expected tokens
+		return "unexpected symbol near " + lookAheadName
+	}
+	res := "unexpected symbol near '" + lookAheadName + "'"
 
 	// To match Bison, suggest at most four expected tokens.
 	expected := make([]int, 0, 4)

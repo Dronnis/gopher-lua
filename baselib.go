@@ -69,25 +69,25 @@ func baseAssert(L *LState) int {
 
 // GCState stores the state of the garbage collector
 type GCState struct {
-	Stop        bool  // true if GC is stopped
-	Pause       int   // pause multiplier (default 200)
-	StepMul     int   // step multiplier (default 200)
-	TotalBytes  int64 // total allocated bytes
-	MaxBytes    int64 // maximum bytes before next GC
+	Stop       bool  // true if GC is stopped
+	Pause      int   // pause multiplier (default 200)
+	StepMul    int   // step multiplier (default 200)
+	TotalBytes int64 // total allocated bytes
+	MaxBytes   int64 // maximum bytes before next GC
 }
 
 // Global GC state
 var globalGCState = &GCState{
-	Stop:      false,
-	Pause:     200,
-	StepMul:   200,
+	Stop:       false,
+	Pause:      200,
+	StepMul:    200,
 	TotalBytes: 0,
-	MaxBytes:  0,
+	MaxBytes:   0,
 }
 
 func baseCollectGarbage(L *LState) int {
 	option := L.OptString(1, "collect")
-	
+
 	switch option {
 	case "collect":
 		// Perform a full garbage collection cycle
@@ -96,17 +96,17 @@ func baseCollectGarbage(L *LState) int {
 		}
 		// Return 0 (no return value in Lua 5.3 for "collect")
 		return 0
-		
+
 	case "stop":
 		// Stop the garbage collector
 		globalGCState.Stop = true
 		return 0
-		
+
 	case "restart":
 		// Restart the garbage collector
 		globalGCState.Stop = false
 		return 0
-		
+
 	case "count":
 		// Return total memory in KB
 		var memStats runtime.MemStats
@@ -116,7 +116,7 @@ func baseCollectGarbage(L *LState) int {
 		bytesRem := memStats.Alloc % 1024
 		L.Push(LNumberFloat(float64(totalKB) + float64(bytesRem)/1024.0))
 		return 1
-		
+
 	case "step":
 		// Perform a garbage collection step
 		stepSize := L.OptInt(2, 0)
@@ -134,7 +134,7 @@ func baseCollectGarbage(L *LState) int {
 		// (we always return true for simplicity)
 		L.Push(LTrue)
 		return 1
-		
+
 	case "setpause":
 		// Set the pause multiplier
 		newPause := L.CheckInt(2)
@@ -142,7 +142,7 @@ func baseCollectGarbage(L *LState) int {
 		globalGCState.Pause = newPause
 		L.Push(LNumberInt(int64(oldPause)))
 		return 1
-		
+
 	case "setstepmul":
 		// Set the step multiplier
 		newStepMul := L.CheckInt(2)
@@ -150,24 +150,24 @@ func baseCollectGarbage(L *LState) int {
 		globalGCState.StepMul = newStepMul
 		L.Push(LNumberInt(int64(oldStepMul)))
 		return 1
-		
+
 	case "isrunning":
 		// Return whether the collector is running
 		L.Push(LBool(!globalGCState.Stop))
 		return 1
-		
+
 	case "setmajorinc":
 		// Lua 5.3 option - set major increment
 		// We don't implement incremental GC, so just return 0
 		L.Push(LNumberInt(0))
 		return 1
-		
+
 	case "getmajorinc":
 		// Lua 5.3 option - get major increment
 		// Return default value
 		L.Push(LNumberInt(0))
 		return 1
-		
+
 	default:
 		L.ArgError(1, "collectgarbage: invalid option '"+option+"'")
 		return 0
@@ -188,7 +188,10 @@ func baseDoFile(L *LState) int {
 }
 
 func baseError(L *LState) int {
-	obj := L.CheckAny(1)
+	obj := L.Get(1)
+	if obj == nil {
+		obj = LNil
+	}
 	level := L.OptInt(2, 1)
 	L.Error(obj, level)
 	return 0
@@ -258,7 +261,7 @@ func baseLoad(L *LState) int {
 	// chunk can be a string or a function
 	chunk := L.Get(1)
 	chunkname := L.OptString(2, "<load>")
-	mode := L.OptString(3, "bt")  // Default mode is "bt" (both text and binary)
+	mode := L.OptString(3, "bt") // Default mode is "bt" (both text and binary)
 
 	// Get environment (4th argument) - can be any value in Lua 5.3
 	var env LValue
@@ -323,7 +326,7 @@ func baseLoad(L *LState) int {
 
 	// Mode validation
 	// "b" = only binary chunks
-	// "t" = only text chunks  
+	// "t" = only text chunks
 	// "bt" or "tb" = both (default)
 	// Empty chunks are considered text chunks
 	if mode == "b" && !isBinary {
@@ -591,7 +594,7 @@ func baseToNumber(L *LState) int {
 				L.Push(LNil)
 				return 1
 			}
-			
+
 			if strings.Index(str, ".") > -1 {
 				if v, err := strconv.ParseFloat(str, base); err != nil {
 					L.Push(LNil)
@@ -724,7 +727,7 @@ func loRequire(L *LState) int {
 		switch retv := ret.(type) {
 		case *LFunction:
 			modasfunc = retv
-			modname = extra  // Use the extra value (file path) as the module name
+			modname = extra // Use the extra value (file path) as the module name
 			goto loopbreak
 		case LString:
 			messages = append(messages, string(retv))

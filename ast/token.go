@@ -5,9 +5,10 @@ import (
 )
 
 type Position struct {
-	Source string
-	Line   int
-	Column int
+	Source   string
+	Line     int
+	Column   int
+	LastLine int
 }
 
 type Token struct {

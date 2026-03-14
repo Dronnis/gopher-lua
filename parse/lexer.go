@@ -24,11 +24,26 @@ type Error struct {
 
 func (e *Error) Error() string {
 	pos := e.Pos
-	if pos.Line == EOF {
-		return fmt.Sprintf("%v at EOF:   %s\n", pos.Source, e.Message)
-	} else {
-		return fmt.Sprintf("%v line:%d(column:%d) near '%v':   %s\n", pos.Source, pos.Line, pos.Column, e.Token, e.Message)
+	// Lua 5.3 compatible error format: [source]:line: message near token
+	source := pos.Source
+	// Wrap non-file sources in [string "..."] format
+	if len(source) > 0 && source[0] != '/' && source[0] != '[' {
+		source = fmt.Sprintf("[string \"%s\"]", source)
 	}
+	// For EOF errors, use the last line number seen
+	line := pos.Line
+	if line <= 0 || line == EOF {
+		if pos.LastLine > 0 {
+			line = pos.LastLine
+		} else {
+			line = 1
+		}
+	}
+	// If message already contains "near", don't add token
+	if strings.Contains(e.Message, " near ") {
+		return fmt.Sprintf("%s:%d: %s\n", source, line, e.Message)
+	}
+	return fmt.Sprintf("%s:%d: %s near '%s'\n", source, line, e.Message, e.Token)
 }
 
 func writeChar(buf *bytes.Buffer, c int) { buf.WriteByte(byte(c)) }
@@ -37,7 +52,9 @@ func isDecimal(ch int) bool { return '0' <= ch && ch <= '9' }
 
 func isOctal(ch int) bool { return '0' <= ch && ch <= '7' }
 
-func isHex(ch int) bool { return '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'f' || 'A' <= ch && ch <= 'F' }
+func isHex(ch int) bool {
+	return '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'f' || 'A' <= ch && ch <= 'F'
+}
 
 func isIdent(ch int, pos int) bool {
 	return ch == '_' || 'A' <= ch && ch <= 'Z' || 'a' <= ch && ch <= 'z' || isDecimal(ch) && pos > 0
@@ -48,8 +65,9 @@ func isDigit(ch int) bool {
 }
 
 type Scanner struct {
-	Pos    ast.Position
-	reader *bufio.Reader
+	Pos      ast.Position
+	LastLine int
+	reader   *bufio.Reader
 }
 
 func NewScanner(reader io.Reader, source string) *Scanner {
@@ -59,11 +77,14 @@ func NewScanner(reader io.Reader, source string) *Scanner {
 			Line:   1,
 			Column: 0,
 		},
-		reader: bufio.NewReaderSize(reader, 4096),
+		LastLine: 1,
+		reader:   bufio.NewReaderSize(reader, 4096),
 	}
 }
 
-func (sc *Scanner) Error(tok string, msg string) *Error { return &Error{sc.Pos, msg, tok} }
+func (sc *Scanner) Error(tok string, msg string) *Error {
+	return &Error{ast.Position{Source: sc.Pos.Source, Line: sc.Pos.Line, Column: sc.Pos.Column, LastLine: sc.LastLine}, msg, tok}
+}
 
 func (sc *Scanner) TokenError(tok ast.Token, msg string) *Error { return &Error{tok.Pos, msg, tok.Str} }
 
@@ -81,6 +102,7 @@ func (sc *Scanner) Newline(ch int) {
 	}
 	sc.Pos.Line += 1
 	sc.Pos.Column = 0
+	sc.LastLine = sc.Pos.Line
 	next := sc.Peek()
 	if ch == '\n' && next == '\r' || ch == '\r' && next == '\n' {
 		sc.reader.ReadByte()
@@ -310,14 +332,14 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 	case 'u':
 		// \u{XXX} Unicode escape (Lua 5.3 feature)
 		if sc.Peek() == '{' {
-			sc.Next()  // skip '{'
+			sc.Next() // skip '{'
 			hex := ""
 			for {
 				ch = sc.Peek()
 				if isHex(ch) {
 					hex += string([]byte{byte(sc.Next())})
 				} else if ch == '}' {
-					sc.Next()  // skip '}'
+					sc.Next() // skip '}'
 					break
 				} else if ch == EOF {
 					// Unexpected EOF inside \u{} - include prefix and partial hex
@@ -329,7 +351,7 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 					token := buf.String() + "\\u{" + hex + string(rune(invalidCh))
 					// Check if next char is '}' and include it
 					if sc.Peek() == '}' {
-						sc.Next()  // skip '}'
+						sc.Next() // skip '}'
 						token += "}"
 					}
 					return sc.Error(token, "invalid unicode escape sequence")
@@ -652,7 +674,7 @@ func (lx *Lexer) TokenError(tok ast.Token, message string) {
 	panic(lx.scanner.TokenError(tok, message))
 }
 
-// skipShebang пропускает shebang строку (#!...) или комментарий (#...) 
+// skipShebang пропускает shebang строку (#!...) или комментарий (#...)
 // если они находятся в начале файла. Это необходимо для совместимости с Lua 5.3
 // и Unix-скриптами.
 func (lx *Lexer) skipShebang() {

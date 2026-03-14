@@ -2706,6 +2706,7 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 	}
 
 	event := ""
+	eventType := "arithmetic"
 	switch opcode {
 	case OP_ADD:
 		event = "__add"
@@ -2723,14 +2724,19 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		event = "__idiv"
 	case OP_BAND:
 		event = "__band"
+		eventType = "bitwise"
 	case OP_BOR:
 		event = "__bor"
+		eventType = "bitwise"
 	case OP_BXOR:
 		event = "__bxor"
+		eventType = "bitwise"
 	case OP_SHL:
 		event = "__shl"
+		eventType = "bitwise"
 	case OP_SHR:
 		event = "__shr"
+		eventType = "bitwise"
 	}
 	op := L.metaOp2(lhs, rhs, event)
 	if _, ok := op.(*LFunction); ok {
@@ -2756,8 +2762,8 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 			return numberArith(L, opcode, LNumber(v1), LNumber(v2))
 		}
 	}
-	L.RaiseError(fmt.Sprintf("cannot perform %v operation between %v and %v",
-		strings.TrimLeft(event, "_"), lhs.Type().String(), rhs.Type().String()))
+	L.RaiseError(fmt.Sprintf("attempt to perform %s operation between %s and %s",
+		eventType, lhs.Type().String(), rhs.Type().String()))
 
 	return LNil
 }
