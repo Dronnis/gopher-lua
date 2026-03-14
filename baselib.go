@@ -245,6 +245,15 @@ func loadaux(L *LState, reader io.Reader, chunkname string, env LValue) int {
 						closed: true,
 					}
 				}
+			} else {
+				// If the function has no upvalues, create one for _ENV
+				// This is needed for Lua 5.3 compatibility when loading binary chunks with env
+				fn.Upvalues = []*Upvalue{
+					{
+						value:  env,
+						closed: true,
+					},
+				}
 			}
 			// Also set Env for backward compatibility with table environments
 			if tb, ok := env.(*LTable); ok {
