@@ -1958,8 +1958,15 @@ func (ls *LState) ObjLen(v1 LValue) int {
 		ls.Call(1, 1)
 		ret := ls.reg.Pop()
 		if ret.Type() == LTNumber {
-			return int(ret.(LNumber).Int64())
+			num := ret.(LNumber)
+			// Lua 5.3: __len must return an integer
+			if !num.IsInteger() {
+				ls.RaiseError("object length is not an integer")
+			}
+			return int(num.Int64())
 		}
+		// Lua 5.3: __len must return a number
+		ls.RaiseError("object length is not an integer")
 	} else if v1.Type() == LTTable {
 		return v1.(*LTable).Len()
 	}
