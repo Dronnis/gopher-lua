@@ -1590,9 +1590,12 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 	if funcexpr.ParList.HasVargs {
 		if CompatVarArg {
 			context.Proto.IsVarArg = VarArgHasArg | VarArgNeedsArg
-			if context.Parent != nil {
-				context.RegisterLocalVar("arg")
-			}
+			// Lua 5.3: removed automatic 'arg' variable for vararg functions
+			// 'arg' now refers to global variable if it exists
+			// Only enable for Lua 5.1/5.2 compatibility mode if needed
+			// if context.Parent != nil {
+			// 	context.RegisterLocalVar("arg")
+			// }
 		}
 		context.Proto.IsVarArg |= VarArgIsVarArg
 	}
