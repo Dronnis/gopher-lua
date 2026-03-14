@@ -112,18 +112,33 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 		L.SetMx(maxMemory)
 		L.OpenLibs()
 		// Register T module for Lua 5.3 tests
-		L.SetGlobal("T", L.NewFunction(OpenTest))
-		L.DoString("T = T()")
+		// Call OpenTest to get the T table and set it as global
+		L.Push(L.NewFunction(OpenTest))
+		if err := L.PCall(0, 1, nil); err != nil {
+			t.Fatal(err)
+		}
+		L.SetGlobal("T", L.Get(-1))
+		L.Pop(1)
 
 		// Set _soft mode for constructs.lua to reduce test combinations
 		if script == "constructs.lua" {
 			L.SetGlobal("_soft", LTrue)
 		}
 
+		// Set _port mode for main.lua to skip platform-specific shell tests
+		// main.lua tests the stand-alone interpreter by running shell commands
+		if script == "main.lua" {
+			L.SetGlobal("_port", LTrue)
+		}
+
 		// Set arg and _ARG tables for Lua 5.3 compatibility (used by main.lua and other tests)
-		// Lua 5.3: arg table has positive indices for arguments and negative for program name
+		// Lua 5.3: arg table has:
+		//   arg[0] = program name
+		//   arg[1], arg[2], ... = script arguments
+		//   arg[-1], arg[-2], ... = interpreter options
 		argtb := L.NewTable()
-		argtb.RawSetInt(-3, LString(script)) // Program name at -3 (like lua command)
+		argtb.RawSetInt(0, LString("lua"))   // Program name at index 0
+		argtb.RawSetInt(-1, LString(script)) // Script name at -1 (like lua command)
 		L.SetGlobal("arg", argtb)
 		L.SetGlobal("_ARG", argtb)
 
