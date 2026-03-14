@@ -215,7 +215,7 @@ func utf8Len(L *LState) int {
 
 	i = luaIndex2StringIndex(s, i, true)
 	if j == -1 {
-		j = len(s)
+		j = len(s) - 1 // Last character index (0-based)
 	} else {
 		j = luaIndex2StringIndex(s, j, false)
 	}
@@ -227,7 +227,7 @@ func utf8Len(L *LState) int {
 
 	count := 0
 	pos := i
-	for pos < j && pos < len(s) {
+	for pos <= j && pos < len(s) {
 		r, size, ok := decodeCodePoint(s, pos)
 		if !ok {
 			if lax {
