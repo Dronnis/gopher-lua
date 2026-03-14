@@ -109,7 +109,9 @@ func (sc *scanner) Next() int {
 		sc.State.started = true
 		if len(sc.src) == 0 {
 			sc.State.Pos = EOS
+			return EOS
 		}
+		sc.State.Pos = 0
 	} else {
 		sc.State.Pos = sc.NextPos()
 	}
@@ -171,6 +173,7 @@ const (
 	opPSave
 	opBrace
 	opNumber
+	opFrontier
 )
 
 type inst struct {
@@ -307,6 +310,10 @@ type bracePattern struct {
 	End   int
 }
 
+type frontierPattern struct {
+	Class class
+}
+
 // }}}
 
 /* parse {{{ */
@@ -408,6 +415,18 @@ func parsePattern(sc *scanner, toplevel bool, inCapture bool) *seqPattern {
 			case 'b':
 				sc.Next()
 				pat.Patterns = append(pat.Patterns, &bracePattern{sc.Next(), sc.Next()})
+			case 'f':
+				sc.Next()
+				// %f[set] - frontier pattern
+				ch := sc.Next()
+				if ch != '[' {
+					panic(newError(sc.CurrentPos(), "missing '[' after %%f"))
+				}
+				// Now position is after '[', at first character of set
+				set := parseClassSet(sc)
+				// parseClassSet reads ']' and moves position after it
+				// So we don't need to check or skip ']'
+				pat.Patterns = append(pat.Patterns, &frontierPattern{set})
 			default:
 				sc.Restore()
 				pat.Patterns = append(pat.Patterns, &singlePattern{parseClass(sc, true)})
@@ -520,6 +539,8 @@ func compilePattern(p pattern, ps ...*iptr) []inst {
 		ptr.insts = append(ptr.insts, inst{opBrace, nil, pat.Begin, pat.End})
 	case *numberPattern:
 		ptr.insts = append(ptr.insts, inst{opNumber, nil, pat.N, -1})
+	case *frontierPattern:
+		ptr.insts = append(ptr.insts, inst{opFrontier, pat.Class, -1, -1})
 	}
 	if toplevel {
 		if p.(*seqPattern).MustTail {
@@ -610,6 +631,32 @@ redo:
 		pc++
 		sp += len(capture)
 		goto redo
+	case opFrontier:
+		// %f[set] - matches a frontier between a character not in set and a character in set
+		inSet := false
+		prevInSet := false
+		if sp < len(src) {
+			inSet = inst.Class.Matches(int(src[sp]))
+		}
+		if sp > 0 && sp <= len(src) {
+			prevInSet = inst.Class.Matches(int(src[sp-1]))
+		}
+		// Normal frontier: previous not in set, current in set
+		if !prevInSet && inSet {
+			pc++
+			goto redo
+		}
+		// End of string with inverted set: %f[^X] matches if prev char is in X (not in ^X)
+		// At end of string, inSet is false (virtual char not in any set, so in ^X = true)
+		// But we check !prevInSet (prev char not in ^X = in X)
+		if sp == len(src) && !prevInSet {
+			// Check if this is an inverted set
+			if set, ok := inst.Class.(*setClass); ok && set.IsNot {
+				pc++
+				goto redo
+			}
+		}
+		return false, sp, m
 	}
 	panic("should not reach here")
 }
