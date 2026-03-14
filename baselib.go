@@ -731,6 +731,20 @@ func loRequire(L *LState) int {
 	if !ok {
 		L.RaiseError("package.searchers must be a table")
 	}
+	// Lua 5.3: also check package.searchers field (can be changed by user)
+	// But only use it if it's a valid table
+	pkg_searchers := L.GetField(L.GetField(L.Get(EnvironIndex), "package"), "searchers")
+	if pkg_searchers != LNil {
+		// package.searchers exists, check if it's a table
+		if pkg_table, ok := pkg_searchers.(*LTable); ok {
+			// Use package.searchers if it's a table (user modified it)
+			searchers = pkg_table
+		} else {
+			// package.searchers exists but is not a table - error
+			L.RaiseError("package.searchers must be a table")
+		}
+	}
+	// If package.searchers is nil (not set), continue using _SEARCHERS from registry
 	messages := []string{}
 	var modasfunc LValue
 	var modname LValue
@@ -743,12 +757,20 @@ func loRequire(L *LState) int {
 		L.Push(LString(name))
 		L.Call(1, MultRet)
 		// Get the return values from the loader
-		// First return value is the function (or error string)
-		ret := L.Get(-1)
+		// After Call, the return values are at the top of the stack
+		// If loader returned N values, they are at positions: -N, -N+1, ..., -1
+		// The first return value (function or error string) is at position -N
+		top := L.GetTop()
+		if top == 0 {
+			// No return values, continue to next searcher
+			continue
+		}
+		// First return value is at position -top (the "lowest" return value on the stack)
+		ret := L.Get(-top)
 		// Second return value (if any) is extra data like file path (Lua 5.3)
 		var extra LValue
-		if L.GetTop() >= 2 {
-			extra = L.Get(-2)
+		if top >= 2 {
+			extra = L.Get(-top + 1) // Second return value
 		}
 		switch retv := ret.(type) {
 		case *LFunction:
@@ -758,15 +780,18 @@ func loRequire(L *LState) int {
 		case LString:
 			messages = append(messages, string(retv))
 		}
-		L.Pop(1)
+		// Clear the return values from the stack
+		L.Pop(top)
 	}
 loopbreak:
 	L.SetField(loaded, name, loopdetection)
 	L.Push(modasfunc)
 	// Pass module name and extra data (file path) to the module function
+	// Lua 5.3: loader returns function, extra_data; then function is called with (name, extra_data)
 	if modname != nil {
-		L.Push(modname)
-		L.Call(1, MultRet)
+		L.Push(LString(name)) // First argument: module name
+		L.Push(modname)       // Second argument: extra data (file path)
+		L.Call(2, MultRet)
 	} else {
 		L.Push(LString(name))
 		L.Call(1, MultRet)

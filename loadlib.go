@@ -105,7 +105,9 @@ func loLoaderLua(L *LState) int {
 	}
 	fn, err1 := L.LoadFile(path)
 	if err1 != nil {
-		L.RaiseError(err1.Error())
+		// Lua 5.3: wrap syntax errors in "error loading module" message
+		L.Push(LString("error loading module: " + err1.Error()))
+		return 1
 	}
 	L.Push(fn)
 	L.Push(LString(path)) // Return the file path as second value (Lua 5.3 compatibility)
@@ -113,8 +115,13 @@ func loLoaderLua(L *LState) int {
 }
 
 func loLoadLib(L *LState) int {
-	L.RaiseError("loadlib is not supported")
-	return 0
+	// Lua 5.3: package.loadlib returns nil, error_message, when
+	// where when is "open", "absent", or "init"
+	// For gopher-lua, we return "absent" since dynamic libraries are not supported
+	L.Push(LNil)
+	L.Push(LString("loadlib is not supported in gopher-lua"))
+	L.Push(LString("absent"))
+	return 3
 }
 
 func loSeeAll(L *LState) int {
