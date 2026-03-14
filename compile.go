@@ -24,7 +24,6 @@ const (
 	ecVararg
 	ecMethod
 	ecNone
-	ecEnv // Lua 5.3: access via _ENV
 )
 
 const regNotDefined = opMaxArgsA + 1
@@ -450,38 +449,29 @@ func (fc *funcContext) CheckUnresolvedGoto() {
 	}
 }
 
-// getEnvUpvalue returns or creates the _ENV upvalue for Lua 5.3 environment access
+// getEnvUpvalue возвращает или создает upvalue для _ENV
+// В Lua 5.3 все глобальные переменные доступны через _ENV[varname]
+// _ENV следует правилам лексической видимости
 func (fc *funcContext) getEnvUpvalue() int {
-	// First, check if _ENV is already registered in this context
+	// Проверяем, есть ли _ENV в текущем контексте (как upvalue)
 	idx := fc.Upvalues.Find("_ENV")
 	if idx != -1 {
 		return idx
 	}
 
-	// For nested functions, _ENV should be captured from parent
+	// Ищем _ENV в родительских контекстах (lexical scoping)
 	current := fc.Parent
 	for current != nil {
 		idx = current.Upvalues.Find("_ENV")
 		if idx != -1 {
-			// Found _ENV in parent, register as upvalue in this context
-			// This will be resolved at runtime when the closure is created
+			// Найдено в родителе, регистрируем как upvalue в текущем контексте
 			return fc.Upvalues.RegisterUnique("_ENV")
 		}
 		current = current.Parent
 	}
 
-	// _ENV not found in any parent - this is the main chunk
-	// Register _ENV as the first upvalue
+	// _ENV не найден - это main chunk, регистрируем как первый upvalue
 	return fc.Upvalues.RegisterUnique("_ENV")
-}
-
-// getEnvReg returns the _ENV register for global variable access
-// This uses a temporary register that is freed after use
-func (fc *funcContext) getEnvReg(code *codeStore, sline int, tempReg int) int {
-	// Use the provided temporary register for _ENV
-	envupvalue := fc.getEnvUpvalue()
-	code.AddABC(OP_GETUPVAL, tempReg, envupvalue, 0, sline)
-	return tempReg
 }
 
 func (fc *funcContext) AddUnresolvedGoto(label *gotoLabelDesc) {
@@ -859,24 +849,14 @@ func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 				reg -= 1
 			}
 		case ecGlobal:
-			// Lua 5.3: set global via _ENV[key] = value
-			// SETTABUP _ENV[key] = value (key is RK-encoded constant string)
-			// A is upvalue index, not register!
+			// Lua 5.3: присваивание глобальной переменной через _ENV[key] = value
+			// SETTABUP _ENV[key] = value (key - RK-кодированная константа)
 			envupvalue := context.getEnvUpvalue()
 			keyindex := context.ConstIndex(LString(ex.(*ast.IdentExpr).Value))
 			code.AddABC(OP_SETTABUP, envupvalue, opRkAsk(keyindex), reg, sline(ex))
 			reg -= 1
 		case ecUpvalue:
 			code.AddABC(OP_SETUPVAL, reg, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
-			reg -= 1
-		case ecEnv:
-			// Lua 5.3: set global via _ENV[key] = value
-			// Use reg+1 as temporary for _ENV
-			tempReg := reg + 1
-			envreg := context.getEnvReg(code, sline(ex), tempReg)
-			// SETTABLEKS _ENV[key] = value (key is RK-encoded constant string)
-			keyindex := context.ConstIndex(LString(ex.(*ast.IdentExpr).Value))
-			code.AddABC(OP_SETTABLEKS, envreg, opRkAsk(keyindex), reg, sline(ex))
 			reg -= 1
 		case ecTable:
 			opcode := OP_SETTABLE
@@ -1281,35 +1261,18 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 		return sused
 	case *ast.IdentExpr:
 		refType := getIdentRefType(context, context, ex)
-		// Special case: accessing _ENV itself should return the _ENV upvalue directly
-		if ex.Value == "_ENV" && refType == ecEnv {
-			// _ENV is not local, so it must be an upvalue (or will be at runtime)
-			envreg := context.getEnvUpvalue()
-			code.AddABC(OP_GETUPVAL, sreg, envreg, 0, sline(ex))
-		} else {
-			switch refType {
-			case ecGlobal:
-				// Lua 5.3: access global via _ENV[key]
-				// GETTABUP sreg = _ENV[key] (key is RK-encoded constant string)
-				// B is upvalue index, not register!
-				envupvalue := context.getEnvUpvalue()
-				keyindex := context.ConstIndex(LString(ex.Value))
-				code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
-			case ecUpvalue:
-				code.AddABC(OP_GETUPVAL, sreg, context.Upvalues.RegisterUnique(ex.Value), 0, sline(ex))
-			case ecLocal:
-				b := context.FindLocalVar(ex.Value)
-				code.AddABC(OP_MOVE, sreg, b, 0, sline(ex))
-			case ecEnv:
-				// Lua 5.3: access global via _ENV[key]
-				// Use sreg+1 as temporary for _ENV
-				tempReg := sreg + 1
-				envreg := context.getEnvReg(code, sline(ex), tempReg)
-				// GETTABLEKS sreg = _ENV[key] (key is RK-encoded constant string)
-				keyindex := context.ConstIndex(LString(ex.Value))
-				code.AddABC(OP_GETTABLEKS, sreg, envreg, opRkAsk(keyindex), sline(ex))
-				return 1 // Result is in sreg
-			}
+		switch refType {
+		case ecGlobal:
+			// Lua 5.3: доступ к глобальной переменной через _ENV[key]
+			// GETTABUP sreg = _ENV[key] (key - RK-кодированная константа)
+			envupvalue := context.getEnvUpvalue()
+			keyindex := context.ConstIndex(LString(ex.Value))
+			code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
+		case ecUpvalue:
+			code.AddABC(OP_GETUPVAL, sreg, context.Upvalues.RegisterUnique(ex.Value), 0, sline(ex))
+		case ecLocal:
+			b := context.FindLocalVar(ex.Value)
+			code.AddABC(OP_MOVE, sreg, b, 0, sline(ex))
 		}
 		return sused
 	case *ast.Comma3Expr:
@@ -1636,10 +1599,13 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 		context.Proto.IsVarArg |= VarArgIsVarArg
 	}
 
-	// Lua 5.3: _ENV is always the first upvalue for main chunks
+	// Lua 5.3: _ENV всегда первый upvalue для main chunk
+	// Вложенные функции наследуют _ENV от родителя через lexical scoping
 	if context.Parent == nil {
+		// Main chunk - регистрируем _ENV как первый upvalue
 		context.Upvalues.RegisterUnique("_ENV")
 	}
+	// Для вложенных функций _ENV будет найден через getIdentRefType и захвачен как upvalue
 
 	compileChunk(context, funcexpr.Stmts, false)
 
@@ -2079,24 +2045,42 @@ func loadRk(context *funcContext, reg *int, expr ast.Expr, cnst LValue) int { //
 
 func getIdentRefType(context *funcContext, current *funcContext, expr *ast.IdentExpr) expContextType { // {{{
 	if current == nil {
-		// In Lua 5.3, global variables are accessed via _ENV
-		// _ENV itself follows normal scoping rules
-		if expr.Value == "_ENV" {
-			// _ENV not found in any scope - this shouldn't happen in normal Lua 5.3
-			return ecEnv
-		}
-		return ecGlobal // Global access via _ENV
-	} else if current.FindLocalVar(expr.Value) > -1 {
+		// Глобальная переменная в main chunk
+		return ecGlobal
+	}
+
+	// Проверяем, является ли переменная локальной в текущем контексте
+	// Это важно для _ENV, который может быть локальной переменной
+	if current.FindLocalVar(expr.Value) > -1 {
 		if current == context {
 			return ecLocal
 		}
 		return ecUpvalue
 	}
-	// Check if _ENV is an upvalue (for direct _ENV access)
+
+	// Специальная обработка для _ENV
+	// _ENV следует правилам лексической видимости
 	if expr.Value == "_ENV" {
-		return ecUpvalue
+		// Ищем _ENV в цепочке контекстов
+		for p := current; p != nil; p = p.Parent {
+			if p.Upvalues.Find("_ENV") > -1 {
+				// Найдено в upvalues родителя - это upvalue
+				return ecUpvalue
+			}
+		}
+		// _ENV не найден в родителях - это глобальная переменная
+		// (будет зарегистрирован как upvalue при компиляции)
+		return ecGlobal
 	}
-	return getIdentRefType(context, current.Parent, expr)
+
+	// Рекурсивно проверяем родительские контексты
+	parent := current.Parent
+	if parent != nil {
+		return getIdentRefType(context, parent, expr)
+	}
+
+	// Переменная не найдена ни в одном контексте - это глобальная переменная
+	return ecGlobal
 } // }}}
 
 func getExprName(context *funcContext, expr ast.Expr) string { // {{{
