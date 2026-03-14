@@ -980,14 +980,15 @@ func (ls *LState) findUpvalue(idx int) *Upvalue {
 
 func (ls *LState) metatable(lvalue LValue, rawget bool) LValue {
 	var metatable LValue = LNil
-	if lvalue == LNil {
-		return LNil
-	}
 	switch obj := lvalue.(type) {
 	case *LTable:
 		metatable = obj.Metatable
 	case *LUserData:
 		metatable = obj.Metatable
+	case *LNilType:
+		if table, ok := ls.G.builtinMts[int(LTNil)]; ok {
+			metatable = table
+		}
 	default:
 		if table, ok := ls.G.builtinMts[int(obj.Type())]; ok {
 			metatable = table
@@ -1146,12 +1147,12 @@ func (ls *LState) pushCallFrame(cf callFrame, fn LValue, meta bool) { // +inline
 	if ls.stack.IsFull() {
 		ls.RaiseError("stack overflow")
 	}
-	
+
 	// Check for call hook (before pushing the frame)
 	if ls.G.Hook != nil && (ls.G.HookMask&HookMaskCall) != 0 && !ls.G.InHook {
 		callHook(ls, HookEventCall, -1)
 	}
-	
+
 	ls.stack.Push(cf)
 	newcf := ls.stack.Last()
 	// this section is inlined by go-inline

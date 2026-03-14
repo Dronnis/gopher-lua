@@ -879,8 +879,13 @@ func (ls *LState) metatable(lvalue LValue, rawget bool) LValue {
 		metatable = obj.Metatable
 	case *LUserData:
 		metatable = obj.Metatable
+	case *LNilType:
+		if table, ok := ls.G.builtinMts[int(LTNil)]; ok {
+			metatable = table
+		}
 	default:
-		if table, ok := ls.G.builtinMts[int(obj.Type())]; ok {
+		typeIndex := int(obj.Type())
+		if table, ok := ls.G.builtinMts[typeIndex]; ok {
 			metatable = table
 		}
 	}

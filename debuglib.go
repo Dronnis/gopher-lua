@@ -8,17 +8,17 @@ import (
 
 // Debug hook constants (Lua 5.3 compatible)
 const (
-	HookMaskCall    = 1 << iota // 'c'
-	HookMaskReturn              // 'r'
-	HookMaskLine                // 'l'
-	HookMaskCount               // 'n'
+	HookMaskCall   = 1 << iota // 'c'
+	HookMaskReturn             // 'r'
+	HookMaskLine               // 'l'
+	HookMaskCount              // 'n'
 )
 
 // HookEvent represents the type of hook event
 type HookEvent int
 
 const (
-	HookEventCall      HookEvent = iota // "call"
+	HookEventCall       HookEvent = iota // "call"
 	HookEventReturn                      // "return"
 	HookEventLine                        // "line"
 	HookEventCount                       // "count"
@@ -84,22 +84,22 @@ func OpenDebug(L *LState) int {
 }
 
 var debugFuncs = map[string]LGFunction{
-	"debug":         debugDebug,
-	"gethook":       debugGetHook,
-	"getinfo":       debugGetInfo,
-	"getlocal":      debugGetLocal,
-	"getmetatable":  debugGetMetatable,
-	"getregistry":   debugGetRegistry,
-	"getupvalue":    debugGetUpvalue,
-	"getuservalue":  debugGetUserValue,
-	"sethook":       debugSetHook,
-	"setlocal":      debugSetLocal,
-	"setmetatable":  debugSetMetatable,
-	"setupvalue":    debugSetUpvalue,
-	"setuservalue":  debugSetUserValue,
-	"traceback":     debugTraceback,
-	"upvalueid":     debugUpvalueID,
-	"upvaluejoin":   debugUpvalueJoin,
+	"debug":        debugDebug,
+	"gethook":      debugGetHook,
+	"getinfo":      debugGetInfo,
+	"getlocal":     debugGetLocal,
+	"getmetatable": debugGetMetatable,
+	"getregistry":  debugGetRegistry,
+	"getupvalue":   debugGetUpvalue,
+	"getuservalue": debugGetUserValue,
+	"sethook":      debugSetHook,
+	"setlocal":     debugSetLocal,
+	"setmetatable": debugSetMetatable,
+	"setupvalue":   debugSetUpvalue,
+	"setuservalue": debugSetUserValue,
+	"traceback":    debugTraceback,
+	"upvalueid":    debugUpvalueID,
+	"upvaluejoin":  debugUpvalueJoin,
 }
 
 func debugGetInfo(L *LState) int {
@@ -228,7 +228,7 @@ func debugGetUserValue(L *LState) int {
 	if ud.Env != nil {
 		// Check if this is a wrapper table for a non-table value
 		// Wrapper tables have exactly one element at index 1 and no metatable
-		if ud.Env.Len() == 1 && ud.Env.Metatable == nil {
+		if ud.Env.Len() == 1 && ud.Env.Metatable == LNil {
 			val := ud.Env.RawGetInt(1)
 			// Return the wrapped value (could be any type including nil)
 			L.Push(val)
@@ -258,7 +258,7 @@ func debugSetUserValue(L *LState) int {
 		// For non-table values, create a wrapper table
 		// This maintains compatibility with existing code that expects Env to be a table
 		wrapper := L.NewTable()
-		wrapper.RawSetInt(1, value)  // Store value at index 1
+		wrapper.RawSetInt(1, value) // Store value at index 1
 		ud.Env = wrapper
 	}
 
@@ -294,7 +294,7 @@ func debugTraceback(L *LState) int {
 // In GopherLua, this is a simplified implementation that executes code from stdin.
 func debugDebug(L *LState) int {
 	prompt := L.OptString(1, "debug> ")
-	
+
 	// Get environment table (optional second argument)
 	var env *LTable
 	if L.GetTop() >= 2 {
@@ -385,7 +385,7 @@ func debugDebug(L *LState) int {
 // debug.sethook(hook, mask[, count])
 func debugSetHook(L *LState) int {
 	hook := L.Get(1)
-	
+
 	// If hook is nil, disable hooks
 	if hook == LNil {
 		L.G.Hook = nil
@@ -393,7 +393,7 @@ func debugSetHook(L *LState) int {
 		L.G.HookCount = 0
 		return 0
 	}
-	
+
 	maskStr := L.CheckString(2)
 	count := L.OptInt(3, 0)
 

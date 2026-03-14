@@ -323,7 +323,8 @@ var jumpTable [opCodeMax + 1]instFunc
 
 func init() {
 	jumpTable = [opCodeMax + 1]instFunc{
-		func(L *LState, inst uint32, baseframe *callFrame) int { reg := L.reg
+		func(L *LState, inst uint32, baseframe *callFrame) int {
+			reg := L.reg
 			cf := L.currentFrame
 			lbase := cf.LocalBase
 			A := int(inst>>18) & 0xff //GETA
@@ -824,13 +825,13 @@ func init() {
 			}
 			return 0
 		},
-		opArith, // OP_ADD
-		opArith, // OP_SUB
-		opArith, // OP_MUL
-		opArith, // OP_DIV
-		opArith, // OP_MOD
-		opArith, // OP_POW
-		opArith, // OP_IDIV
+		opArith,   // OP_ADD
+		opArith,   // OP_SUB
+		opArith,   // OP_MUL
+		opArith,   // OP_DIV
+		opArith,   // OP_MOD
+		opArith,   // OP_POW
+		opArith,   // OP_IDIV
 		opBitwise, // OP_BAND
 		opBitwise, // OP_BOR
 		opBitwise, // OP_BXOR
@@ -844,7 +845,7 @@ func init() {
 			RA := lbase + A
 			B := int(inst & 0x1ff) //GETB
 			unaryv := L.rkValue(B)
-			
+
 			// Check for __bnot metamethod
 			op := L.metaOp1(unaryv, "__bnot")
 			if fn, ok := op.(*LFunction); ok {
@@ -869,7 +870,7 @@ func init() {
 				}
 				return 0
 			}
-			
+
 			// Lua 5.3: bitwise operations coerce strings to numbers
 			var nm LNumber
 			var ok bool
@@ -1246,7 +1247,7 @@ func init() {
 					L.reg.Push(lhs)
 					L.Call(2, 1)
 					result := L.reg.Pop()
-					ret = !LVAsBool(result)  // a <= b iff not (b < a)
+					ret = !LVAsBool(result) // a <= b iff not (b < a)
 				} else if v1, ok1 := lhs.(LNumber); ok1 {
 					if v2, ok2 := rhs.(LNumber); ok2 {
 						// NaN comparisons always return false
@@ -2463,7 +2464,7 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 	C := int(inst>>9) & 0x1ff //GETC
 	lhs := L.rkValue(B)
 	rhs := L.rkValue(C)
-	
+
 	// Helper function to check if value came from direct table field access
 	isDirectFieldAccess := func(regIdx int) bool {
 		if regIdx < lbase {
@@ -2483,7 +2484,7 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 		}
 		return false
 	}
-	
+
 	// Lua 5.3: bitwise operations coerce strings to numbers
 	var v1, v2 LNumber
 	var ok1, ok2 bool
@@ -2629,26 +2630,26 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 			return 0
 		}
 	}
-	
+
 	v := numberArith(L, opcode, v1, v2)
+	{
+		rg := reg
+		regi := RA
+		vali := v
+		newSize := regi + 1
 		{
-			rg := reg
-			regi := RA
-			vali := v
-			newSize := regi + 1
-			{
-				requiredSize := newSize
-				if requiredSize > cap(rg.array) {
-					rg.resize(requiredSize)
-				}
-			}
-			rg.array[regi] = vali
-			if regi >= rg.top {
-				rg.top = regi + 1
+			requiredSize := newSize
+			if requiredSize > cap(rg.array) {
+				rg.resize(requiredSize)
 			}
 		}
-		return 0
+		rg.array[regi] = vali
+		if regi >= rg.top {
+			rg.top = regi + 1
+		}
 	}
+	return 0
+}
 
 func luaModulo(lhs, rhs LNumber) LNumber {
 	return lhs.Mod(rhs)
@@ -2809,7 +2810,7 @@ func lessThan(L *LState, lhs, rhs LValue) bool {
 		result := L.reg.Pop()
 		return LVAsBool(result)
 	}
-	
+
 	// optimization for numbers
 	if v1, ok1 := lhs.(LNumber); ok1 {
 		if v2, ok2 := rhs.(LNumber); ok2 {
@@ -2836,52 +2837,72 @@ func lessThan(L *LState, lhs, rhs LValue) bool {
 }
 
 func equals(L *LState, lhs, rhs LValue, raw bool) bool {
-	// Check __eq metamethod first (Lua 5.3: works for mixed types)
-	// But only if at least one operand has a metatable
+	// Check __eq metamethod (Lua 5.3 compatible)
+	// __eq is called only if:
+	// 1. Both values have the same type and at least one has a metatable with __eq, OR
+	// 2. Both values have different types but BOTH have metatables with __eq
 	if !raw {
 		var eqFn *LFunction
-		
-		// For userdata, check metatable directly
-		// Lua 5.3: if both have __eq, use the first one
+		var hasEqLeft, hasEqRight bool
+
+		// Check if lhs has __eq
 		if ud1, ok1 := lhs.(*LUserData); ok1 {
 			if mt, ok := ud1.Metatable.(*LTable); ok {
 				op := mt.RawGetString("__eq")
 				if fn, ok := op.(*LFunction); ok {
 					eqFn = fn
+					hasEqLeft = true
 				}
 			}
 		}
-		// If lhs doesn't have __eq, check rhs
-		if eqFn == nil {
-			if ud2, ok2 := rhs.(*LUserData); ok2 {
-				if mt, ok := ud2.Metatable.(*LTable); ok {
-					op := mt.RawGetString("__eq")
-					if fn, ok := op.(*LFunction); ok {
+		// Check if rhs has __eq
+		if ud2, ok2 := rhs.(*LUserData); ok2 {
+			if mt, ok := ud2.Metatable.(*LTable); ok {
+				op := mt.RawGetString("__eq")
+				if fn, ok := op.(*LFunction); ok {
+					if !hasEqLeft {
 						eqFn = fn
 					}
+					hasEqRight = true
 				}
 			}
 		}
 		// For tables, use metaOp2 (checks both operands)
-		if eqFn == nil {
+		if !hasEqLeft || !hasEqRight {
 			if _, ok1 := lhs.(*LTable); ok1 {
 				if _, ok2 := rhs.(*LTable); ok2 {
 					op := L.metaOp2(lhs, rhs, "__eq")
 					if fn, ok := op.(*LFunction); ok {
-						eqFn = fn
+						if !hasEqLeft {
+							eqFn = fn
+						}
+						hasEqLeft = true
+						hasEqRight = true
 					}
 				}
 			}
 		}
-		
-		// Call the __eq metamethod if found
+
+		// Check if we should call __eq
+		// For different types, both must have __eq
 		if eqFn != nil {
-			L.reg.Push(eqFn)
-			L.reg.Push(lhs)
-			L.reg.Push(rhs)
-			L.Call(2, 1)
-			result := L.reg.Pop()
-			return LVAsBool(result)
+			shouldCall := false
+			if lhs.Type() == rhs.Type() {
+				// Same type: call if at least one has __eq
+				shouldCall = hasEqLeft || hasEqRight
+			} else {
+				// Different types: call only if both have __eq
+				shouldCall = hasEqLeft && hasEqRight
+			}
+
+			if shouldCall {
+				L.reg.Push(eqFn)
+				L.reg.Push(lhs)
+				L.reg.Push(rhs)
+				L.Call(2, 1)
+				result := L.reg.Pop()
+				return LVAsBool(result)
+			}
 		}
 	}
 
