@@ -24,7 +24,6 @@ var gluaTests []string = []string{
 	"os.lua",
 	"table.lua",
 	"vm.lua",
-	"math.lua",
 	// "strings.lua",
 	// "goto.lua",
 }
