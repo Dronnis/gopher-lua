@@ -78,6 +78,8 @@ Available options are:
 	if nargs := flag.NArg(); nargs > 0 {
 		script := flag.Arg(0)
 		argtb := L.NewTable()
+		// Lua 5.3: arg[0] is the program name
+		L.RawSet(argtb, lua.LNumberInt(0), lua.LString(script))
 		for i := 1; i < nargs; i++ {
 			L.RawSet(argtb, lua.LNumberInt(int64(i)), lua.LString(flag.Arg(i)))
 		}
