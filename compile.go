@@ -247,12 +247,10 @@ func (cd *codeStore) PropagateMV(top int, save *int, reg *int, inc int) {
 }
 
 func (cd *codeStore) AddLoadNil(a, b, line int) {
-	last := cd.Last()
-	if opGetOpCode(last) == OP_LOADNIL && (opGetArgB(last)+1) == a {
-		cd.SetB(cd.LastPC(), b)
-	} else {
-		cd.AddABC(OP_LOADNIL, a, b, 0, line)
-	}
+	// Disabled merging optimization for Lua 5.3 goto compatibility
+	// Merging LOADNIL across labels causes variables to be reset incorrectly
+	// when jumping to a label
+	cd.AddABC(OP_LOADNIL, a, b, 0, line)
 }
 
 func (cd *codeStore) SetOpCode(pc int, v int) {
