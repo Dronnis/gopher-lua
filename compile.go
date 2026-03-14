@@ -1110,14 +1110,36 @@ func compileBreakStmt(context *funcContext, stmt *ast.BreakStmt) { // {{{
 } // }}}
 
 func compileFuncDefStmt(context *funcContext, stmt *ast.FuncDefStmt) { // {{{
+	// Сохраняем текущий регистр
+	baseReg := context.RegTop()
+
 	if stmt.Name.Func == nil {
-		reg := context.RegTop()
+		// Это метод: obj:method = function(...) ... end
+		// Выделяем регистры для receiver и функции
+
+		reg := baseReg
 		var treg, kreg int
+
+		// Компилируем receiver (объект, которому принадлежит метод)
 		compileExprWithKMVPropagation(context, stmt.Name.Receiver, &reg, &treg)
+
+		// Выделяем регистр для функции
+		funcReg := reg
+		reg++
+
+		// Компилируем функцию
+		compileExpr(context, funcReg, stmt.Func, ecfuncdef)
+
+		// Загружаем ключ (имя метода)
 		kreg = loadRk(context, &reg, stmt.Func, LString(stmt.Name.Method))
-		compileExpr(context, reg, stmt.Func, ecfuncdef)
-		context.Code.AddABC(OP_SETTABLE, treg, kreg, reg, sline(stmt.Name.Receiver))
+
+		// Присваиваем: receiver[methodname] = function
+		context.Code.AddABC(OP_SETTABLE, treg, kreg, funcReg, sline(stmt.Name.Receiver))
+
 	} else {
+		// Это обычная функция: funcname = function(...) ... end
+		// Используем упрощенный подход через assignstmt
+
 		astmt := &ast.AssignStmt{Lhs: []ast.Expr{stmt.Name.Func}, Rhs: []ast.Expr{stmt.Func}}
 		astmt.SetLine(sline(stmt.Func))
 		astmt.SetLastLine(eline(stmt.Func))
@@ -1286,7 +1308,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 				// GETTABLEKS sreg = _ENV[key] (key is RK-encoded constant string)
 				keyindex := context.ConstIndex(LString(ex.Value))
 				code.AddABC(OP_GETTABLEKS, sreg, envreg, opRkAsk(keyindex), sline(ex))
-				return 1  // Result is in sreg
+				return 1 // Result is in sreg
 			}
 		}
 		return sused
