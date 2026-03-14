@@ -62,6 +62,9 @@ func OpenPackage(L *LState) int {
 	L.SetField(packagemod, "loaded", loaded)
 	L.SetField(L.Get(RegistryIndex), "_LOADED", loaded)
 
+	// Lua 5.3: package module should be in package.loaded['package']
+	L.SetField(loaded, "package", packagemod)
+
 	L.SetField(packagemod, "path", LString(loGetPath(LuaPath, LuaPathDefault)))
 	L.SetField(packagemod, "cpath", emptyLString)
 
@@ -105,7 +108,7 @@ func loLoaderLua(L *LState) int {
 		L.RaiseError(err1.Error())
 	}
 	L.Push(fn)
-	L.Push(LString(path))  // Return the file path as second value (Lua 5.3 compatibility)
+	L.Push(LString(path)) // Return the file path as second value (Lua 5.3 compatibility)
 	return 2
 }
 

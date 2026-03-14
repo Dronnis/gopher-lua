@@ -395,6 +395,23 @@ func baseNext(L *LState) int {
 	if L.GetTop() >= 2 {
 		index = L.Get(2)
 	}
+	// Lua 5.3: next() должен вызывать ошибку, если ключ не существует
+	if index != LNil {
+		// Проверяем, существует ли ключ в таблице
+		if tb.RawGet(index) == LNil {
+			// Ключ не найден - проверяем, действительно ли его нет
+			// (может быть nil значением, но ключ существует)
+			found := false
+			tb.ForEach(func(k, v LValue) {
+				if k == index {
+					found = true
+				}
+			})
+			if !found {
+				L.RaiseError("invalid key to 'next'")
+			}
+		}
+	}
 	key, value := tb.Next(index)
 	if key == LNil {
 		L.Push(LNil)

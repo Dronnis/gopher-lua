@@ -11,15 +11,15 @@ func OpenTable(L *LState) int {
 }
 
 var tableFuncs = map[string]LGFunction{
-	"getn":    tableGetN,
-	"concat":  tableConcat,
-	"insert":  tableInsert,
-	"maxn":    tableMaxN,
-	"move":    tableMove,
-	"remove":  tableRemove,
-	"sort":    tableSort,
-	"pack":    tablePack,
-	"unpack":  tableUnpack,
+	"getn":   tableGetN,
+	"concat": tableConcat,
+	"insert": tableInsert,
+	"maxn":   tableMaxN,
+	"move":   tableMove,
+	"remove": tableRemove,
+	"sort":   tableSort,
+	"pack":   tablePack,
+	"unpack": tableUnpack,
 }
 
 func tableSort(L *LState) int {
@@ -47,9 +47,43 @@ func tableMaxN(L *LState) int {
 func tableRemove(L *LState) int {
 	tbl := L.CheckTable(1)
 	if L.GetTop() == 1 {
-		L.Push(tbl.Remove(-1))
+		// Lua 5.3: table.remove без аргументов удаляет элемент с индексом #tbl
+		// Используем ObjLen для поддержки __len metamethod
+		// Важно: передаём LValue, а не *LTable, чтобы вызвать __len
+		pos := L.ObjLen(L.Get(1))
+		// Если #tbl == 0, проверяем наличие элемента с ключом 0
+		if pos == 0 {
+			val := tbl.RawGet(LNumberInt(0))
+			if val != LNil {
+				tbl.RawSet(LNumberInt(0), LNil)
+				L.Push(val)
+				return 1
+			}
+		}
+		L.Push(tbl.Remove(pos))
 	} else {
-		L.Push(tbl.Remove(L.CheckInt(2)))
+		pos := L.CheckInt(2)
+		// Lua 5.3: позиция должна быть в диапазоне [1, len] или len+1 (для nil)
+		// pos == 0 допустимо только если len == 0 (элемент с ключом 0)
+		// Используем ObjLen для поддержки __len metamethod
+		// Важно: передаём LValue, а не *LTable, чтобы вызвать __len
+		len := L.ObjLen(L.Get(1))
+		if pos < 0 || pos > len+1 {
+			L.RaiseError("table index out of bounds")
+		}
+		if pos == 0 {
+			if len == 0 {
+				// Допустимо для таблиц с элементом с ключом 0
+				val := tbl.RawGet(LNumberInt(0))
+				tbl.RawSet(LNumberInt(0), LNil)
+				L.Push(val)
+				return 1
+			} else {
+				// Недопустимо для таблиц с len > 0
+				L.RaiseError("table index out of bounds")
+			}
+		}
+		L.Push(tbl.Remove(pos))
 	}
 	return 1
 }
@@ -98,7 +132,15 @@ func tableInsert(L *LState) int {
 		tbl.Append(L.Get(2))
 		return 0
 	}
-	tbl.Insert(int(L.CheckInt(2)), L.CheckAny(3))
+	pos := L.CheckInt(2)
+	// Lua 5.3: позиция должна быть в диапазоне [1, #tbl+1]
+	// Используем ObjLen для поддержки __len metamethod
+	// Важно: передаём LValue, а не *LTable, чтобы вызвать __len
+	len := L.ObjLen(L.Get(1))
+	if pos < 1 || pos > len+1 {
+		L.RaiseError("table index out of bounds")
+	}
+	tbl.Insert(pos, L.CheckAny(3))
 	return 0
 }
 
@@ -110,7 +152,7 @@ func tableMove(L *LState) int {
 	f := L.CheckInt(2)
 	e := L.CheckInt(3)
 	t := L.CheckInt(4)
-	
+
 	var a2 *LTable
 	if L.GetTop() >= 5 {
 		a2 = L.CheckTable(5)
@@ -133,13 +175,13 @@ func tableMove(L *LState) int {
 		// Copy backwards to avoid overwriting elements that haven't been copied yet
 		for i := e0; i >= f0; i-- {
 			val := a1.RawGetInt(i + 1) // RawGetInt uses 1-based indexing
-			a2.RawSetInt(t0 + (i - f0) + 1, val)
+			a2.RawSetInt(t0+(i-f0)+1, val)
 		}
 	} else {
 		// Copy forwards
 		for i := f0; i <= e0; i++ {
 			val := a1.RawGetInt(i + 1) // RawGetInt uses 1-based indexing
-			a2.RawSetInt(t0 + (i - f0) + 1, val)
+			a2.RawSetInt(t0+(i-f0)+1, val)
 		}
 	}
 
