@@ -33,6 +33,7 @@ type lFile struct {
 	reader *bufio.Reader
 	stdout io.ReadCloser
 	closed bool
+	std    bool // true if this is a standard file (stdin, stdout, stderr)
 }
 
 type lFileType int
@@ -62,7 +63,7 @@ func errorIfFileIsClosed(L *LState, file *lFile) {
 	}
 }
 
-func newFile(L *LState, file *os.File, path string, flag int, perm os.FileMode, writable, readable bool) (*LUserData, error) {
+func newFile(L *LState, file *os.File, path string, flag int, perm os.FileMode, writable, readable bool, std bool) (*LUserData, error) {
 	ud := L.NewUserData()
 	var err error
 	if file == nil {
@@ -71,7 +72,7 @@ func newFile(L *LState, file *os.File, path string, flag int, perm os.FileMode, 
 			return nil, err
 		}
 	}
-	lfile := &lFile{fp: file, pp: nil, writer: nil, reader: nil, stdout: nil, closed: false}
+	lfile := &lFile{fp: file, pp: nil, writer: nil, reader: nil, stdout: nil, closed: false, std: std}
 	ud.Value = lfile
 	if writable {
 		lfile.writer = file
@@ -181,11 +182,12 @@ func OpenIo(L *LState) int {
 	mod := L.RegisterModule(IoLibName, map[string]LGFunction{}).(*LTable)
 	mt := L.NewTypeMetatable(lFileClass)
 	mt.RawSetString("__index", mt)
+	mt.RawSetString("__name", LString(lFileClass))
 	L.SetFuncs(mt, fileMethods)
 	mt.RawSetString("lines", L.NewClosure(fileLines, L.NewFunction(fileLinesIter)))
 
 	for _, finfo := range stdFiles {
-		file, _ := newFile(L, finfo.file, "", 0, os.FileMode(0), finfo.writable, finfo.readable)
+		file, _ := newFile(L, finfo.file, "", 0, os.FileMode(0), finfo.writable, finfo.readable, true)
 		mod.RawSetString(finfo.name, file)
 	}
 	uv := L.CreateTable(2, 0)
@@ -258,6 +260,12 @@ errreturn:
 }
 
 func fileCloseAux(L *LState, file *lFile) int {
+	// Lua 5.3: cannot close standard files (stdin, stdout, stderr)
+	if file.std {
+		L.Push(LNil)
+		L.Push(LString("cannot close standard file"))
+		return 2
+	}
 	file.closed = true
 	var err error
 	if file.writer != nil {
@@ -355,7 +363,7 @@ func fileReadAux(L *LState, file *lFile, idx int) int {
 		case LString:
 			options := L.CheckString(i)
 			if len(options) > 0 && options[0] != '*' {
-				L.ArgError(2, "invalid options:"+options)
+				L.ArgError(2, "invalid format: "+options)
 			}
 			for _, opt := range options[1:] {
 				switch opt {
@@ -394,7 +402,7 @@ func fileReadAux(L *LState, file *lFile, idx int) int {
 					}
 					L.Push(LString(string(buf)))
 				default:
-					L.ArgError(2, "invalid options:"+string(opt))
+					L.ArgError(2, "invalid format: "+string(opt))
 				}
 			}
 		}
@@ -413,6 +421,13 @@ var fileSeekOptions = []string{"set", "cur", "end"}
 
 func fileSeek(L *LState) int {
 	file := checkFile(L)
+	// Lua 5.3: cannot seek on stdin/stdout/stderr
+	if file.std {
+		L.Push(LNil)
+		L.Push(LString("cannot seek a standard file"))
+		L.Push(LNumberInt(1)) // errno compatibility
+		return 3
+	}
 	if file.Type() != lFileFile {
 		L.Push(LNil)
 		L.Push(LString("can not seek a process."))
@@ -542,7 +557,7 @@ func ioInput(L *LState) int {
 	}
 	switch lv := L.Get(1).(type) {
 	case LString:
-		file, err := newFile(L, nil, string(lv), os.O_RDONLY, 0600, false, true)
+		file, err := newFile(L, nil, string(lv), os.O_RDONLY, 0600, false, true, false)
 		if err != nil {
 			L.RaiseError(err.Error())
 		}
@@ -604,7 +619,7 @@ func ioLines(L *LState) int {
 	}
 
 	path := L.CheckString(1)
-	ud, err := newFile(L, nil, path, os.O_RDONLY, os.FileMode(0600), false, true)
+	ud, err := newFile(L, nil, path, os.O_RDONLY, os.FileMode(0600), false, true, false)
 	if err != nil {
 		return 0
 	}
@@ -612,7 +627,7 @@ func ioLines(L *LState) int {
 	return 1
 }
 
-var ioOpenOpions = []string{"r", "rb", "w", "wb", "a", "ab", "r+", "rb+", "w+", "wb+", "a+", "ab+"}
+var ioOpenOpions = []string{"r", "rb", "w", "wb", "a", "ab", "r+", "r+b", "w+", "wb+", "w+b", "a+", "ab+", "a+b"}
 
 func ioOpenFile(L *LState) int {
 	path := L.CheckString(1)
@@ -623,7 +638,18 @@ func ioOpenFile(L *LState) int {
 	perm := 0600
 	writable := true
 	readable := true
-	switch ioOpenOpions[L.CheckOption(2, ioOpenOpions)] {
+	modeStr := L.CheckString(2)
+	modeIndex := -1
+	for i, v := range ioOpenOpions {
+		if v == modeStr {
+			modeIndex = i
+			break
+		}
+	}
+	if modeIndex == -1 {
+		L.ArgError(2, "invalid mode: "+modeStr)
+	}
+	switch ioOpenOpions[modeIndex] {
 	case "r", "rb":
 		mode = os.O_RDONLY
 		writable = false
@@ -632,14 +658,14 @@ func ioOpenFile(L *LState) int {
 		readable = false
 	case "a", "ab":
 		mode = os.O_WRONLY | os.O_APPEND | os.O_CREATE
-	case "r+", "rb+":
+	case "r+", "r+b":
 		mode = os.O_RDWR
-	case "w+", "wb+":
+	case "w+", "wb+", "w+b":
 		mode = os.O_RDWR | os.O_TRUNC | os.O_CREATE
-	case "a+", "ab+":
+	case "a+", "ab+", "a+b":
 		mode = os.O_APPEND | os.O_RDWR | os.O_CREATE
 	}
-	file, err := newFile(L, nil, path, mode, os.FileMode(perm), writable, readable)
+	file, err := newFile(L, nil, path, mode, os.FileMode(perm), writable, readable, false)
 	if err != nil {
 		L.Push(LNil)
 		L.Push(LString(err.Error()))
@@ -664,7 +690,18 @@ func ioPopen(L *LState) int {
 	var file *LUserData
 	var err error
 
-	switch ioPopenOptions[L.CheckOption(2, ioPopenOptions)] {
+	modeStr := L.CheckString(2)
+	modeIndex := -1
+	for i, v := range ioPopenOptions {
+		if v == modeStr {
+			modeIndex = i
+			break
+		}
+	}
+	if modeIndex == -1 {
+		L.ArgError(2, "invalid mode: "+modeStr)
+	}
+	switch ioPopenOptions[modeIndex] {
 	case "r":
 		file, err = newProcess(L, cmd, false, true)
 	case "w":
@@ -710,7 +747,7 @@ func ioTmpFile(L *LState) int {
 		return 2
 	}
 	L.G.tempFiles = append(L.G.tempFiles, file)
-	ud, _ := newFile(L, file, "", 0, os.FileMode(0), true, true)
+	ud, _ := newFile(L, file, "", 0, os.FileMode(0), true, true, false)
 	L.Push(ud)
 	return 1
 }
@@ -722,7 +759,7 @@ func ioOutput(L *LState) int {
 	}
 	switch lv := L.Get(1).(type) {
 	case LString:
-		file, err := newFile(L, nil, string(lv), os.O_WRONLY|os.O_CREATE, 0600, true, false)
+		file, err := newFile(L, nil, string(lv), os.O_WRONLY|os.O_CREATE, 0600, true, false, false)
 		if err != nil {
 			L.RaiseError(err.Error())
 		}
