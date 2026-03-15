@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
@@ -43,8 +44,6 @@ const (
 	lFileProcess
 )
 
-const fileDefOutIndex = 1
-const fileDefInIndex = 2
 const fileDefaultWriteBuffer = 4096
 const fileDefaultReadBuffer = 4096
 
@@ -64,6 +63,33 @@ func errorIfFileIsClosed(L *LState, file *lFile) {
 }
 
 func newFile(L *LState, file *os.File, path string, flag int, perm os.FileMode, writable, readable bool, std bool) (*LUserData, error) {
+	ud := L.NewUserData()
+	var err error
+	if file == nil {
+		file, err = os.OpenFile(path, flag, perm)
+		if err != nil {
+			return nil, err
+		}
+	}
+	lfile := &lFile{fp: file, pp: nil, writer: nil, reader: nil, stdout: nil, closed: false, std: std}
+	ud.Value = lfile
+	if writable {
+		lfile.writer = file
+	}
+	if readable {
+		lfile.reader = bufio.NewReaderSize(file, fileDefaultReadBuffer)
+	}
+	L.SetMetatable(ud, L.GetTypeMetatable(lFileClass))
+	// Track open files for proper GC behavior
+	// Only track files that should be closed by GC (not standard files or files opened by io.input/io.output)
+	if !std {
+		L.G.openFiles[lfile] = true
+	}
+	return ud, nil
+}
+
+// newFileNoTrack creates a file without tracking it for GC
+func newFileNoTrack(L *LState, file *os.File, path string, flag int, perm os.FileMode, writable, readable bool, std bool) (*LUserData, error) {
 	ud := L.NewUserData()
 	var err error
 	if file == nil {
@@ -231,7 +257,7 @@ func fileToString(L *LState) int {
 	return 1
 }
 
-func fileWriteAux(L *LState, file *lFile, idx int) int {
+func fileWriteAux(L *LState, file *lFile, fileud *LUserData, idx int) int {
 	if n := fileIsWritable(L, file); n != 0 {
 		return n
 	}
@@ -248,7 +274,8 @@ func fileWriteAux(L *LState, file *lFile, idx int) int {
 	}
 
 	file.AbandonReadBuffer()
-	L.Push(LTrue)
+	// Lua 5.3: file:write returns the file handle on success
+	L.Push(fileud)
 	return 1
 errreturn:
 
@@ -267,6 +294,8 @@ func fileCloseAux(L *LState, file *lFile) int {
 		return 2
 	}
 	file.closed = true
+	// Remove from tracked files
+	delete(L.G.openFiles, file)
 	var err error
 	if file.writer != nil {
 		if bwriter, ok := file.writer.(*bufio.Writer); ok {
@@ -362,22 +391,38 @@ func fileReadAux(L *LState, file *lFile, idx int) int {
 			L.Push(LString(string(buf)))
 		case LString:
 			options := L.CheckString(i)
-			if len(options) > 0 && options[0] != '*' {
-				L.ArgError(2, "invalid format: "+options)
-			}
-			for _, opt := range options[1:] {
+			// Lua 5.3: support both "*n" and "n" formats (with and without '*')
+			for _, opt := range options {
+				if opt == '*' {
+					continue // Skip '*' prefix for compatibility
+				}
 				switch opt {
 				case 'n':
-					var v LNumber
-					_, err = fmt.Fscanf(file.reader, LNumberScanFormat, &v)
-					if err == io.EOF {
+					// Lua 5.3: read number (supports hex floats like 0xABCp-3)
+					var line string
+					line, err = file.reader.ReadString('\n')
+					if err == io.EOF && line == "" {
 						L.Push(LNil)
 						goto normalreturn
 					}
-					if err != nil {
+					if err != nil && err != io.EOF {
 						goto errreturn
 					}
-					L.Push(v)
+					line = strings.TrimSpace(line)
+					if line == "" {
+						L.Push(LNumberInt(0))
+					} else {
+						var v LNumber
+						v, err = parseNumber(line)
+						if err != nil {
+							goto errreturn
+						}
+						L.Push(v)
+					}
+					if err == io.EOF {
+						goto normalreturn
+					}
+					err = nil
 				case 'a':
 					var buf []byte
 					buf, err = io.ReadAll(file.reader)
@@ -400,6 +445,20 @@ func fileReadAux(L *LState, file *lFile, idx int) int {
 					if err != nil {
 						goto errreturn
 					}
+					L.Push(LString(string(buf)))
+				case 'L':
+					var buf []byte
+					var iseof bool
+					buf, err, iseof = readBufioLine(file.reader)
+					if iseof {
+						L.Push(LNil)
+						goto normalreturn
+					}
+					if err != nil {
+						goto errreturn
+					}
+					// Include the newline character
+					buf = append(buf, '\n')
 					L.Push(LString(string(buf)))
 				default:
 					L.ArgError(2, "invalid format: "+string(opt))
@@ -465,7 +524,9 @@ errreturn:
 }
 
 func fileWrite(L *LState) int {
-	return fileWriteAux(L, checkFile(L), 2)
+	fileud := L.CheckUserData(1)
+	file := fileud.Value.(*lFile)
+	return fileWriteAux(L, file, fileud, 2)
 }
 
 func fileClose(L *LState) int {
@@ -557,15 +618,28 @@ func ioInput(L *LState) int {
 	}
 	switch lv := L.Get(1).(type) {
 	case LString:
-		file, err := newFile(L, nil, string(lv), os.O_RDONLY, 0600, false, true, false)
+		// Close the previous input file if it's not a standard file
+		oldFile := fileDefIn(L)
+		if oldf, ok := oldFile.Value.(*lFile); ok && !oldf.closed && !oldf.std {
+			oldf.fp.Close()
+			oldf.closed = true
+		}
+		file, err := newFileNoTrack(L, nil, string(lv), os.O_RDONLY, 0600, false, true, false)
 		if err != nil {
 			L.RaiseError(err.Error())
+			return 0
 		}
 		L.Get(UpvalueIndex(1)).(*LTable).RawSetInt(fileDefInIndex, file)
 		L.Push(file)
 		return 1
 	case *LUserData:
-		if _, ok := lv.Value.(*lFile); ok {
+		if file, ok := lv.Value.(*lFile); ok {
+			// Close the previous input file if it's not a standard file
+			oldFile := fileDefIn(L)
+			if oldf, ok := oldFile.Value.(*lFile); ok && !oldf.closed && !oldf.std && oldf.fp != file.fp {
+				oldf.fp.Close()
+				oldf.closed = true
+			}
 			L.Get(UpvalueIndex(1)).(*LTable).RawSetInt(fileDefInIndex, lv)
 			L.Push(lv)
 			return 1
@@ -623,6 +697,7 @@ func ioLines(L *LState) int {
 	if err != nil {
 		return 0
 	}
+	// The finalizer is already set in newFile
 	L.Push(L.NewClosure(ioLinesIter, L.Get(UpvalueIndex(1)), ud))
 	return 1
 }
@@ -665,14 +740,22 @@ func ioOpenFile(L *LState) int {
 	case "a+", "ab+", "a+b":
 		mode = os.O_APPEND | os.O_RDWR | os.O_CREATE
 	}
-	file, err := newFile(L, nil, path, mode, os.FileMode(perm), writable, readable, false)
+	file, err := os.OpenFile(path, mode, os.FileMode(perm))
 	if err != nil {
 		L.Push(LNil)
 		L.Push(LString(err.Error()))
 		L.Push(LNumberInt(1)) // C-Lua compatibility: Original Lua pushes errno to the stack
 		return 3
 	}
-	L.Push(file)
+	ud, err := newFile(L, file, "", 0, os.FileMode(0), writable, readable, false)
+	if err != nil {
+		file.Close()
+		L.Push(LNil)
+		L.Push(LString(err.Error()))
+		L.Push(LNumberInt(1))
+		return 3
+	}
+	L.Push(ud)
 	return 1
 
 }
@@ -759,15 +842,28 @@ func ioOutput(L *LState) int {
 	}
 	switch lv := L.Get(1).(type) {
 	case LString:
-		file, err := newFile(L, nil, string(lv), os.O_WRONLY|os.O_CREATE, 0600, true, false, false)
+		// Close the previous output file if it's not a standard file
+		oldFile := fileDefOut(L)
+		if oldf, ok := oldFile.Value.(*lFile); ok && !oldf.closed && !oldf.std {
+			oldf.fp.Close()
+			oldf.closed = true
+		}
+		file, err := newFileNoTrack(L, nil, string(lv), os.O_WRONLY|os.O_CREATE, 0600, true, false, false)
 		if err != nil {
 			L.RaiseError(err.Error())
+			return 0
 		}
 		L.Get(UpvalueIndex(1)).(*LTable).RawSetInt(fileDefOutIndex, file)
 		L.Push(file)
 		return 1
 	case *LUserData:
-		if _, ok := lv.Value.(*lFile); ok {
+		if file, ok := lv.Value.(*lFile); ok {
+			// Close the previous output file if it's not a standard file
+			oldFile := fileDefOut(L)
+			if oldf, ok := oldFile.Value.(*lFile); ok && !oldf.closed && !oldf.std && oldf.fp != file.fp {
+				oldf.fp.Close()
+				oldf.closed = true
+			}
 			L.Get(UpvalueIndex(1)).(*LTable).RawSetInt(fileDefOutIndex, lv)
 			L.Push(lv)
 			return 1
@@ -779,7 +875,8 @@ func ioOutput(L *LState) int {
 }
 
 func ioWrite(L *LState) int {
-	return fileWriteAux(L, fileDefOut(L).Value.(*lFile), 1)
+	fileud := fileDefOut(L)
+	return fileWriteAux(L, fileud.Value.(*lFile), fileud, 1)
 }
 
 //

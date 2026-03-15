@@ -645,6 +645,7 @@ func newGlobal() *Global {
 		Global:     newLTable(0, 64),
 		builtinMts: make(map[int]LValue),
 		tempFiles:  make([]*os.File, 0, 10),
+		openFiles:  make(map[*lFile]bool),
 	}
 }
 

@@ -9,6 +9,12 @@ import (
 	"strings"
 )
 
+// File descriptor indices (from iolib.go)
+const (
+	fileDefOutIndex = 1
+	fileDefInIndex  = 2
+)
+
 /* basic functions {{{ */
 
 func OpenBase(L *LState) int {
@@ -90,6 +96,33 @@ func baseCollectGarbage(L *LState) int {
 
 	switch option {
 	case "collect":
+		// Close tracked files that are no longer referenced
+		// This handles the case where io.lines(file) is called but the iterator is not consumed
+		// Don't close files that are the current input or output files
+		var input_file, output_file *lFile
+		uv := L.Get(UpvalueIndex(1))
+		if uv != nil {
+			if tb, ok := uv.(*LTable); ok {
+				if ud := tb.RawGetInt(fileDefInIndex); ud != nil {
+					if u, ok := ud.(*LUserData); ok {
+						input_file = u.Value.(*lFile)
+					}
+				}
+				if ud := tb.RawGetInt(fileDefOutIndex); ud != nil {
+					if u, ok := ud.(*LUserData); ok {
+						output_file = u.Value.(*lFile)
+					}
+				}
+			}
+		}
+		for lfile := range L.G.openFiles {
+			if !lfile.closed && !lfile.std && lfile != input_file && lfile != output_file {
+				lfile.fp.Close()
+				lfile.closed = true
+			}
+		}
+		L.G.openFiles = make(map[*lFile]bool)
+
 		// Perform a full garbage collection cycle
 		if !globalGCState.Stop {
 			runtime.GC()

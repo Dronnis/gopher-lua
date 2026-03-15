@@ -151,7 +151,7 @@ func parseNumber(number string) (LNumber, error) {
 		number = number[1:]
 	}
 
-	// Handle negative numbers
+	// Handle negative sign before 0x (e.g., "0x-..." from string.format("0x%X", -n))
 	isNegative := false
 	if strings.HasPrefix(number, "-") {
 		isNegative = true
@@ -160,6 +160,12 @@ func parseNumber(number string) (LNumber, error) {
 
 	// Check for hexadecimal format (0x...)
 	if strings.HasPrefix(strings.ToLower(number), "0x") {
+		// Check for negative sign after 0x (e.g., "0x-...")
+		if len(number) > 2 && number[2] == '-' {
+			isNegative = !isNegative
+			number = "0x" + number[3:]
+		}
+
 		// Check if it contains 'p' exponent (hexadecimal float with binary exponent)
 		// Format: 0x...p±exp where exp is decimal
 		pIndex := -1
@@ -169,7 +175,7 @@ func parseNumber(number string) (LNumber, error) {
 				break
 			}
 		}
-		
+
 		if pIndex >= 0 {
 			// Has p exponent, parse as hex float with binary exponent
 			if v, err := parseHexFloatWithExp(number); err == nil {
@@ -279,7 +285,7 @@ func parseHexFloat(s string) (float64, error) {
 	// For larger numbers, we use math.Ldexp to scale
 	var intValue float64
 	integerLen := len(integerPart)
-	
+
 	if integerLen > 0 {
 		// For very long numbers, parse in chunks
 		if integerLen <= 15 {
@@ -302,7 +308,7 @@ func parseHexFloat(s string) (float64, error) {
 			if integerLen < mantissaDigits {
 				mantissaDigits = integerLen
 			}
-			
+
 			// Parse the first mantissaDigits
 			for i := 0; i < mantissaDigits; i++ {
 				c := integerPart[i]
@@ -316,7 +322,7 @@ func parseHexFloat(s string) (float64, error) {
 				}
 				intValue = intValue*16 + float64(digit)
 			}
-			
+
 			// Scale by 4 bits (one hex digit) for each remaining digit
 			remainingDigits := integerLen - mantissaDigits
 			if remainingDigits > 0 {
@@ -373,20 +379,20 @@ func parseHexFloatWithExp(s string) (float64, error) {
 		expSign = -1
 		expPart = expPart[1:]
 	}
-	
+
 	// Check for double sign (e.g., "+-" or "-+")
 	if len(expPart) > 0 && (expPart[0] == '+' || expPart[0] == '-') {
 		return 0, fmt.Errorf("invalid exponent: double sign")
 	}
-	
+
 	// Trim spaces from exponent part
 	expPart = strings.TrimSpace(expPart)
-	
+
 	// Exponent part must not be empty and must contain only digits
 	if len(expPart) == 0 {
 		return 0, fmt.Errorf("missing exponent after 'p'")
 	}
-	
+
 	binaryExponent := 0
 	for _, c := range expPart {
 		if c >= '0' && c <= '9' {
@@ -399,7 +405,7 @@ func parseHexFloatWithExp(s string) (float64, error) {
 
 	// Find decimal point in hex part
 	dotIndex := strings.IndexByte(hexPart, '.')
-	
+
 	var mantissa float64
 	var hexExponent int // Additional exponent from hex digit positions
 
@@ -407,7 +413,7 @@ func parseHexFloatWithExp(s string) (float64, error) {
 		// No decimal point: 0x<hex_digits>p<exp>
 		// All hex digits are integer part
 		integerPart := hexPart
-		
+
 		// Parse up to 15 significant hex digits for mantissa
 		integerLen := len(integerPart)
 		if integerLen > 0 {
@@ -416,7 +422,7 @@ func parseHexFloatWithExp(s string) (float64, error) {
 			if integerLen < mantissaDigits {
 				mantissaDigits = integerLen
 			}
-			
+
 			for i := 0; i < mantissaDigits; i++ {
 				c := integerPart[i]
 				var digit int
@@ -429,7 +435,7 @@ func parseHexFloatWithExp(s string) (float64, error) {
 				}
 				mantissa = mantissa*16 + float64(digit)
 			}
-			
+
 			// The remaining digits contribute to the exponent
 			// Each hex digit = 4 bits
 			hexExponent = (integerLen - mantissaDigits) * 4
@@ -446,7 +452,7 @@ func parseHexFloatWithExp(s string) (float64, error) {
 			if integerLen < mantissaDigits {
 				mantissaDigits = integerLen
 			}
-			
+
 			for i := 0; i < mantissaDigits; i++ {
 				c := integerPart[i]
 				var digit int
@@ -459,7 +465,7 @@ func parseHexFloatWithExp(s string) (float64, error) {
 				}
 				mantissa = mantissa*16 + float64(digit)
 			}
-			
+
 			hexExponent = (integerLen - mantissaDigits) * 4
 		}
 
@@ -471,9 +477,9 @@ func parseHexFloatWithExp(s string) (float64, error) {
 				currentDigits = 15
 			}
 			remainingMantissaDigits := 15 - currentDigits
-			
+
 			fracLen := len(fractionalPart)
-			
+
 			// Find first non-zero digit
 			firstNonZero := -1
 			for i := 0; i < fracLen; i++ {
@@ -482,18 +488,18 @@ func parseHexFloatWithExp(s string) (float64, error) {
 					break
 				}
 			}
-			
+
 			if firstNonZero >= 0 {
 				// We have non-zero digits, adjust exponent for leading zeros
 				hexExponent -= firstNonZero * 4
-				
+
 				// Parse up to remainingMantissaDigits starting from firstNonZero
 				parseDigits := remainingMantissaDigits
 				availableDigits := fracLen - firstNonZero
 				if availableDigits < parseDigits {
 					parseDigits = availableDigits
 				}
-				
+
 				// Scale factor for fractional part (start at 1.0 since we already adjusted exponent)
 				scale := 1.0
 				for i := 0; i < parseDigits; i++ {
@@ -509,7 +515,7 @@ func parseHexFloatWithExp(s string) (float64, error) {
 					}
 					mantissa += float64(digit) * scale
 				}
-				
+
 				// Remaining digits after mantissa contribute negative exponent
 				remainingFracDigits := fracLen - firstNonZero - parseDigits
 				if remainingFracDigits > 0 {
@@ -525,7 +531,7 @@ func parseHexFloatWithExp(s string) (float64, error) {
 	// Combine mantissa with total exponent (hexExponent + binaryExponent)
 	totalExponent := hexExponent + binaryExponent
 	value := math.Ldexp(mantissa, totalExponent)
-	
+
 	return value, nil
 }
 

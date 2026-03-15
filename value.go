@@ -167,6 +167,9 @@ type Global struct {
 	HookMask  int
 	HookCount int
 	InHook    bool
+
+	// Track open files for proper GC behavior
+	openFiles map[*lFile]bool
 }
 
 type LState struct {
