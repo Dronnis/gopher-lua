@@ -1292,7 +1292,14 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 			keyindex := context.ConstIndex(LString(ex.Value))
 			if envupvalue >= 0 {
 				// _ENV доступен через upvalue
-				code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
+				if keyindex <= opMaxIndexRk {
+					code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
+				} else {
+					// Константа слишком большая, сначала загружаем в регистр
+					keyreg := sreg + 1
+					code.AddABx(OP_LOADK, keyreg, keyindex, sline(ex))
+					code.AddABC(OP_GETTABUP, sreg, envupvalue, keyreg, sline(ex))
+				}
 			} else {
 				// _ENV локальная переменная - используем GETTABLE
 				envreg := context.FindLocalVar("_ENV")
@@ -1301,11 +1308,25 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 					envreg = findLocalEnvInParent(context, "_ENV")
 				}
 				if envreg >= 0 {
-					code.AddABC(OP_GETTABLE, sreg, envreg, opRkAsk(keyindex), sline(ex))
+					if keyindex <= opMaxIndexRk {
+						code.AddABC(OP_GETTABLE, sreg, envreg, opRkAsk(keyindex), sline(ex))
+					} else {
+						// Константа слишком большая, сначала загружаем в регистр
+						keyreg := sreg + 1
+						code.AddABx(OP_LOADK, keyreg, keyindex, sline(ex))
+						code.AddABC(OP_GETTABLE, sreg, envreg, keyreg, sline(ex))
+					}
 				} else {
 					// Fallback to GETTABUP with global _ENV
 					envupvalue = context.Upvalues.RegisterUnique("_ENV")
-					code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
+					if keyindex <= opMaxIndexRk {
+						code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
+					} else {
+						// Константа слишком большая, сначала загружаем в регистр
+						keyreg := sreg + 1
+						code.AddABx(OP_LOADK, keyreg, keyindex, sline(ex))
+						code.AddABC(OP_GETTABUP, sreg, envupvalue, keyreg, sline(ex))
+					}
 				}
 			}
 		case ecUpvalue:
