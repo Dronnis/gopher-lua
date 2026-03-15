@@ -47,18 +47,18 @@ var mathFuncs = map[string]LGFunction{
 	"tan":        mathTan,
 	"tanh":       mathTanh,
 	// Lua 5.3 functions
-	"tointeger":  mathToInteger,
-	"type":       mathType,
-	"ult":        mathUlt,
+	"tointeger": mathToInteger,
+	"type":      mathType,
+	"ult":       mathUlt,
 	// Bitwise operations (Lua 5.3)
-	"band":       mathBand,
-	"bor":        mathBor,
-	"bxor":       mathBxor,
-	"bnot":       mathBnot,
-	"lshift":     mathLshift,
-	"rshift":     mathRshift,
-	"extract":    mathExtract,
-	"replace":    mathReplace,
+	"band":    mathBand,
+	"bor":     mathBor,
+	"bxor":    mathBxor,
+	"bnot":    mathBnot,
+	"lshift":  mathLshift,
+	"rshift":  mathRshift,
+	"extract": mathExtract,
+	"replace": mathReplace,
 }
 
 func mathAbs(L *LState) int {
@@ -174,7 +174,7 @@ func mathLdexp(L *LState) int {
 
 func mathLog(L *LState) int {
 	v := L.CheckNumber(1)
-	base := L.OptNumber(2, LNumberFloat(math.E))  // Default to natural log
+	base := L.OptNumber(2, LNumberFloat(math.E)) // Default to natural log
 	// Lua 5.3: math.log(x, base) = log(x) / log(base)
 	result := math.Log(v.Float64()) / math.Log(base.Float64())
 	L.Push(LNumberFloat(result))
@@ -243,7 +243,7 @@ func mathMod(L *LState) int {
 func mathModf(L *LState) int {
 	v := L.CheckNumber(1)
 	f := v.Float64()
-	
+
 	// Handle special cases: NaN and Inf
 	if math.IsNaN(f) {
 		L.Push(LNumberFloat(math.NaN()))
@@ -255,7 +255,7 @@ func mathModf(L *LState) int {
 		L.Push(LNumberFloat(0.0))
 		return 2
 	}
-	
+
 	intPart, fracPart := math.Modf(f)
 
 	// Return integer part as integer if possible
@@ -285,16 +285,102 @@ func mathRad(L *LState) int {
 }
 
 func mathRandom(L *LState) int {
+	// Lua 5.3: math.random() accepts 0, 1, or 2 arguments
+	if L.GetTop() > 2 {
+		L.ArgError(3, "wrong number of arguments")
+		return 0
+	}
 	switch L.GetTop() {
 	case 0:
 		L.Push(LNumberFloat(rand.Float64()))
 	case 1:
-		n := L.CheckInt(1)
-		L.Push(LNumberInt(int64(rand.Intn(n) + 1)))
+		n := L.CheckInt64(1)
+		if n <= 0 {
+			L.ArgError(1, "interval is empty")
+			return 0
+		}
+		// Use Int63n for positive numbers, handle large values
+		if n > math.MaxInt64 {
+			// For very large numbers, use float64 approximation
+			L.Push(LNumberInt(int64(rand.Float64()*float64(n)) + 1))
+		} else {
+			L.Push(LNumberInt(rand.Int63n(n) + 1))
+		}
 	default:
-		min := L.CheckInt(1)
-		max := L.CheckInt(2) + 1
-		L.Push(LNumberInt(int64(rand.Intn(max-min) + min)))
+		min := L.CheckInt64(1)
+		max := L.CheckInt64(2)
+		if max < min {
+			L.ArgError(2, "interval is empty")
+			return 0
+		}
+		// Lua 5.3: reject intervals that are too large for uniform distribution
+		// The range (max - min) must fit in a positive int64
+		if min < 0 && max >= 0 {
+			// Range crosses zero (or is [minint, 0]). The range is max - min + 1.
+			// Special case: [minint, 0] is too large
+			if min == math.MinInt64 && max == 0 {
+				L.ArgError(1, "interval too large")
+				return 0
+			}
+			// For other cases where max > 0, check if the range overflows
+			if max > 0 {
+				// This overflows if max > math.MaxInt64 + min (i.e., max + (-min) > math.MaxInt64)
+				// Since min < 0, -min > 0. We need to check if max + (-min) > math.MaxInt64.
+				// But -min can overflow if min == math.MinInt64 (handled above).
+				if min == math.MinInt64 {
+					// Already handled [minint, 0] above, so this is [minint, -1] or similar
+					// [minint, -1] is handled specially below
+					L.ArgError(1, "interval too large")
+					return 0
+				}
+				// Now -min is safe (doesn't overflow)
+				if max > math.MaxInt64+min {
+					// max - min > math.MaxInt64
+					L.ArgError(1, "interval too large")
+					return 0
+				}
+			}
+		}
+		// Handle the full int64 range specially
+		if min == math.MinInt64 && max == math.MaxInt64 {
+			// For full range, use random bytes
+			var buf [8]byte
+			rand.Read(buf[:])
+			L.Push(LNumberInt(int64(buf[0]) | int64(buf[1])<<8 | int64(buf[2])<<16 |
+				int64(buf[3])<<24 | int64(buf[4])<<32 | int64(buf[5])<<40 |
+				int64(buf[6])<<48 | int64(buf[7])<<56))
+		} else if min == 0 && max == math.MaxInt64 {
+			// Special case for [0, maxint]: max+1 overflows, so use Int63() directly
+			L.Push(LNumberInt(rand.Int63()))
+		} else if min == math.MinInt64 && max == -1 {
+			// Special case for [minint, -1]: use random negative number
+			// -minint overflows, so use Int63() and negate
+			L.Push(LNumberInt(-rand.Int63() - 1))
+		} else {
+			// Calculate range carefully to avoid overflow
+			range_ := max - min
+			if range_ < 0 {
+				// Overflow in subtraction, use two-step approach
+				// Generate random sign and magnitude
+				if rand.Float64() < 0.5 {
+					L.Push(LNumberInt(rand.Int63n(-min+1) + min))
+				} else {
+					L.Push(LNumberInt(rand.Int63n(max + 1)))
+				}
+			} else if range_ > math.MaxInt64/2 {
+				// Very large range, use combination of Int63n calls
+				// Split range into two halves
+				half := range_ / 2
+				if rand.Float64() < 0.5 {
+					L.Push(LNumberInt(rand.Int63n(half+1) + min))
+				} else {
+					L.Push(LNumberInt(rand.Int63n(range_-half) + min + half + 1))
+				}
+			} else {
+				// Normal case: range_ + 1 to include max
+				L.Push(LNumberInt(rand.Int63n(range_+1) + min))
+			}
+		}
 	}
 	return 1
 }
@@ -340,7 +426,7 @@ func mathTanh(L *LState) int {
 func mathToInteger(L *LState) int {
 	// Lua 5.3: accepts numbers and strings, returns nil for invalid values
 	arg := L.Get(1)
-	
+
 	// Try to convert to number first (handles both numbers and numeric strings)
 	var v LNumber
 	switch val := arg.(type) {
@@ -359,7 +445,7 @@ func mathToInteger(L *LState) int {
 		L.Push(LNil)
 		return 1
 	}
-	
+
 	if v.IsInteger() {
 		L.Push(v)
 	} else {
@@ -477,11 +563,11 @@ func mathExtract(L *LState) int {
 	v := L.CheckNumber(1)
 	field := L.CheckInt(2)
 	width := L.OptInt(3, 1)
-	
+
 	if field < 0 || width < 1 || field+width > 64 {
 		L.RaiseError("invalid field width")
 	}
-	
+
 	mask := (int64(1) << uint(width)) - 1
 	result := (v.Int64() >> uint(field)) & mask
 	L.Push(LNumberInt(result))
@@ -494,11 +580,11 @@ func mathReplace(L *LState) int {
 	value := L.CheckNumber(2)
 	field := L.CheckInt(3)
 	width := L.OptInt(4, 1)
-	
+
 	if field < 0 || width < 1 || field+width > 64 {
 		L.RaiseError("invalid field width")
 	}
-	
+
 	mask := (int64(1) << uint(width)) - 1
 	maskedValue := value.Int64() & mask
 	maskedV := v.Int64() &^ (mask << uint(field))
