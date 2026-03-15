@@ -465,14 +465,25 @@ func strRep(L *LState) int {
 	strLen := len(str)
 	sepLen := len(sep)
 
-	// Вычисляем общий размер результата: n*strLen + (n-1)*sepLen
-	// Используем int64 для предотвращения переполнения при вычислении
-	totalSize := int64(strLen) * int64(n)
-	if sepLen > 0 && n > 1 {
-		totalSize += int64(sepLen) * int64(n-1)
+	// Проверяем переполнение до вычислений
+	// Если strLen > 0 и n > maxSize/strLen, то результат будет слишком большим
+	if strLen > 0 && n > maxSize/strLen {
+		L.RaiseError("too large")
+		return 0
 	}
 
-	if totalSize > int64(maxSize) {
+	// Вычисляем общий размер результата: n*strLen + (n-1)*sepLen
+	totalSize := strLen * n
+	if sepLen > 0 && n > 1 {
+		// Проверяем переполнение для разделителя
+		if sepLen > maxSize/(n-1) {
+			L.RaiseError("too large")
+			return 0
+		}
+		totalSize += sepLen * (n - 1)
+	}
+
+	if totalSize > maxSize {
 		L.RaiseError("too large")
 		return 0
 	}

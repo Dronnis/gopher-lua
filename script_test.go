@@ -143,9 +143,10 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 		L.SetGlobal("_ARG", argtb)
 
 		// Force GC before running memory-intensive tests
-		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" {
+		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" || script == "strings.lua" {
 			runtime.GC()
 		}
+		L.SetMx(maxMemory)
 
 		if err := L.DoFile(script); err != nil {
 			t.Error(err)
@@ -153,7 +154,7 @@ func testScriptDir(t *testing.T, tests []string, directory string) {
 		L.Close()
 
 		// Force GC after running memory-intensive tests
-		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" {
+		if script == "constructs.lua" || script == "heavy.lua" || script == "verybig.lua" || script == "strings.lua" {
 			runtime.GC()
 		}
 	}
