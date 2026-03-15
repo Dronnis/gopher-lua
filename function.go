@@ -12,9 +12,10 @@ const (
 )
 
 type DbgLocalInfo struct {
-	Name    string
-	StartPc int
-	EndPc   int
+	Name     string
+	StartPc  int
+	EndPc    int
+	Register int // Register index relative to LocalBase
 }
 
 type DbgCall struct {

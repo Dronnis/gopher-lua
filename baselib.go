@@ -269,7 +269,26 @@ func baseLoad(L *LState) int {
 	// Lua 5.3 compatibility: load(chunk [, chunkname [, mode [, env]]])
 	// chunk can be a string or a function
 	chunk := L.Get(1)
-	chunkname := L.OptString(2, "<load>")
+
+	// Lua 5.3: default chunkname for string chunks is [string "first 20 chars..."]
+	// For function chunks, it's "<function>"
+	chunkname := L.OptString(2, "")
+	if chunkname == "" {
+		if s, ok := chunk.(LString); ok {
+			// Use first 20 characters of the first line (Lua 5.3 behavior)
+			str := string(s)
+			// Take only the first line (Lua 5.3 strips newlines)
+			if idx := strings.IndexAny(str, "\n\r"); idx >= 0 {
+				str = str[:idx]
+			}
+			if len(str) > 20 {
+				str = str[:20] + "..."
+			}
+			chunkname = "[string \"" + str + "\"]"
+		} else {
+			chunkname = "<function>"
+		}
+	}
 	mode := L.OptString(3, "bt") // Default mode is "bt" (both text and binary)
 
 	// Get environment (4th argument) - can be any value in Lua 5.3

@@ -462,6 +462,16 @@ func yyErrorMessage(state, lookAhead int) string {
 	// Replace $end with <eof> for Lua 5.3 compatibility
 	if lookAheadName == "$end" {
 		lookAheadName = "<eof>"
+		// For EOF, check if we're expecting '}' (table constructor)
+		// This is a simplified heuristic - check if '}' is an expected token
+		base := int(yyPact[state])
+		for tok := TOKSTART; tok-1 < len(yyToknames); tok++ {
+			if n := base + tok; n >= 0 && n < yyLast && int(yyChk[int(yyAct[n])]) == tok {
+				if yyTokname(tok) == "'}'" {
+					return "'}' expected (to close '{' at line 1) near " + lookAheadName
+				}
+			}
+		}
 		// For EOF, just return the basic message without expected tokens
 		return "unexpected symbol near " + lookAheadName
 	}

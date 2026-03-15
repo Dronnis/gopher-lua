@@ -191,6 +191,69 @@ type LState struct {
 	// nCcalls tracks nested C calls for yield protection
 	// When > 0, yield is not allowed (yield across C boundary)
 	nCcalls int
+	// lastValueSource tracks the source of the last loaded value for better error messages
+	// Format: "global 'name'", "field 'name'", "method 'name'", "upvalue 'name'", "local 'name'", ""
+	lastValueSource string
+	// lastObjectSource tracks the source of the object for method/field calls
+	// Used to generate error messages like "field 'bbb' (global 'aaa')"
+	lastObjectSource string
+	// regValueSources tracks the source of values in registers for error messages
+	// This is used to track global variable access through local _ENV
+	regValueSources []string
+}
+
+// getLocalVarName returns the name of a local variable at a given register and PC
+func (ls *LState) getLocalVarName(regIdx int) string {
+	cf := ls.currentFrame
+	if cf == nil || cf.Fn == nil || cf.Fn.Proto == nil {
+		return ""
+	}
+	proto := cf.Fn.Proto
+	lbase := cf.LocalBase
+	// Convert absolute register index to relative index within the function
+	relRegIdx := regIdx - lbase
+	if relRegIdx < 0 {
+		return ""
+	}
+	// Search through debug local info for a matching register
+	for _, local := range proto.DbgLocals {
+		if local.StartPc <= cf.Pc && cf.Pc < local.EndPc {
+			if local.Register == relRegIdx {
+				return local.Name
+			}
+		}
+	}
+	return ""
+}
+
+// setRegValueSource sets the source of a value in a register for error messages
+func (ls *LState) setRegValueSource(regIdx int, source string) {
+	if regIdx >= 0 && regIdx < len(ls.regValueSources) {
+		ls.regValueSources[regIdx] = source
+	}
+}
+
+// getRegValueSource returns the source of a value in a register
+func (ls *LState) getRegValueSource(regIdx int) string {
+	if regIdx >= 0 && regIdx < len(ls.regValueSources) {
+		return ls.regValueSources[regIdx]
+	}
+	return ""
+}
+
+// clearRegValueSource clears the source of a value in a register
+func (ls *LState) clearRegValueSource(regIdx int) {
+	if regIdx >= 0 && regIdx < len(ls.regValueSources) {
+		ls.regValueSources[regIdx] = ""
+	}
+}
+
+// trackLocalVar tracks a local variable at the given register for error messages
+func (ls *LState) trackLocalVar(regIdx int) {
+	name := ls.getLocalVarName(regIdx)
+	if name != "" {
+		ls.lastValueSource = fmt.Sprintf("local '%s'", name)
+	}
 }
 
 func (ls *LState) String() string   { return fmt.Sprintf("thread: %p", ls) }

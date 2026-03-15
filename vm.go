@@ -351,6 +351,12 @@ func init() {
 					rg.top = regi + 1
 				}
 			}
+			// Track local variable - MOVE copies value from register B to A
+			// If B is a local variable, track it for error messages
+			L.trackLocalVar(lbase + B)
+			// Copy regValueSource from B to A
+			source := L.getRegValueSource(lbase + B)
+			L.setRegValueSource(RA, source)
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_MOVEN
@@ -411,6 +417,9 @@ func init() {
 				}
 			}
 			cf.Pc = pc
+			// Track local variable - MOVEN copies values, track the last one
+			// The last MOVE in the sequence determines the source for error messages
+			L.trackLocalVar(lbase + B)
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_LOADK
@@ -561,6 +570,11 @@ func init() {
 					}
 				}
 			}
+			// Track source for error messages - LOADNIL sets local variables to nil
+			// Set lastValueSource to the last variable being nil-ed
+			if B >= A && A < int(cf.Fn.Proto.NumUsedRegisters) {
+				L.trackLocalVar(lbase + B)
+			}
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_GETUPVAL
@@ -595,6 +609,12 @@ func init() {
 					rg.top = regi + 1
 				}
 			}
+			// Track source for upvalue access - store in lastValueSource for immediate use
+			if B < len(cf.Fn.Proto.DbgUpvalues) {
+				L.lastValueSource = fmt.Sprintf("upvalue '%s'", cf.Fn.Proto.DbgUpvalues[B])
+			} else {
+				L.lastValueSource = ""
+			}
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_SETUPVAL
@@ -618,6 +638,7 @@ func init() {
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_GETTABUP
 			cf := L.currentFrame
+			A := int(inst>>18) & 0xff //GETA
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
 			// Check if upvalue exists and is not nil
@@ -633,13 +654,33 @@ func init() {
 			if opIsK(C) {
 				idx := opIndexK(C)
 				if idx < len(cf.Fn.Proto.stringConstants) && cf.Fn.Proto.stringConstants[idx] != "" {
-					v := L.getFieldString(upvalue.Value(), cf.Fn.Proto.stringConstants[idx])
-					L.reg.Set(cf.LocalBase+int(inst>>18)&0xff, v)
+					key := cf.Fn.Proto.stringConstants[idx]
+					v := L.getFieldString(upvalue.Value(), key)
+					L.reg.Set(cf.LocalBase+A, v)
+					// Track source for error messages
+					// If upvalue is _ENV, this is a global variable access
+					RA := cf.LocalBase + A
+					if B < len(cf.Fn.Proto.DbgUpvalues) {
+						upvalueName := cf.Fn.Proto.DbgUpvalues[B]
+						if upvalueName == "_ENV" {
+							source := fmt.Sprintf("global '%s'", key)
+							L.setRegValueSource(RA, source)
+							L.lastValueSource = source
+						} else {
+							source := fmt.Sprintf("upvalue '%s'", upvalueName)
+							L.setRegValueSource(RA, source)
+							L.lastValueSource = source
+						}
+					} else {
+						L.clearRegValueSource(RA)
+						L.lastValueSource = ""
+					}
 					return 0
 				}
 			}
 			v := L.getField(upvalue.Value(), L.rkValue(C))
-			L.reg.Set(cf.LocalBase+int(inst>>18)&0xff, v)
+			L.reg.Set(cf.LocalBase+A, v)
+			L.lastValueSource = ""
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_GETTABLE
@@ -650,7 +691,9 @@ func init() {
 			RA := lbase + A
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
-			v := L.getField(reg.Get(lbase+B), L.rkValue(C))
+			obj := reg.Get(lbase + B)
+			key := L.rkValue(C)
+			v := L.getField(obj, key)
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -670,6 +713,24 @@ func init() {
 				if regi >= rg.top {
 					rg.top = regi + 1
 				}
+			}
+			// Track source for error messages - check if this is access through local _ENV
+			isLocalEnv := false
+			for _, local := range cf.Fn.Proto.DbgLocals {
+				if local.Name == "_ENV" && local.Register == (lbase+B-cf.LocalBase) && local.StartPc <= cf.Pc && cf.Pc < local.EndPc {
+					isLocalEnv = true
+					break
+				}
+			}
+			if isLocalEnv {
+				// Access through local _ENV - track as global variable
+				if keyStr, ok := key.(LString); ok {
+					source := fmt.Sprintf("global '%s'", string(keyStr))
+					L.setRegValueSource(RA, source)
+					L.lastValueSource = source
+				}
+			} else {
+				L.clearRegValueSource(RA)
 			}
 			return 0
 		},
@@ -681,7 +742,9 @@ func init() {
 			RA := lbase + A
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
-			v := L.getFieldString(reg.Get(lbase+B), L.rkString(C))
+			key := L.rkString(C)
+			obj := reg.Get(lbase + B)
+			v := L.getFieldString(obj, key)
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -702,6 +765,36 @@ func init() {
 					rg.top = regi + 1
 				}
 			}
+			// Track source for error messages - this is a field access
+			// Special case: if object is local _ENV, track as global variable access
+			// Check if the object register corresponds to a local variable named _ENV
+			isLocalEnv := false
+			for _, local := range cf.Fn.Proto.DbgLocals {
+				if local.Name == "_ENV" && local.Register == (lbase+B-cf.LocalBase) && local.StartPc <= cf.Pc && cf.Pc < local.EndPc {
+					isLocalEnv = true
+					break
+				}
+			}
+			if isLocalEnv {
+				// Access through local _ENV - track as global variable
+				source := fmt.Sprintf("global '%s'", key)
+				L.setRegValueSource(RA, source)
+				L.lastValueSource = source
+				return 0
+			}
+			// Save the object source before overwriting
+			if L.lastValueSource != "" && !strings.HasPrefix(L.lastValueSource, "field ") && !strings.HasPrefix(L.lastValueSource, "method ") {
+				// Only save object source if the value is a table (successful access)
+				// If the value is nil/non-table, the error should be on the object, not the field
+				if v.Type() == LTTable {
+					L.lastObjectSource = L.lastValueSource
+				} else {
+					// Value is not a table - keep the object source as the error source
+					// (don't overwrite with field source)
+					L.lastObjectSource = ""
+				}
+			}
+			L.lastValueSource = fmt.Sprintf("field '%s'", key)
 			return 0
 		},
 		func(L *LState, inst uint32, baseframe *callFrame) int { //OP_SETTABUP
@@ -782,7 +875,8 @@ func init() {
 			B := int(inst & 0x1ff)    //GETB
 			C := int(inst>>9) & 0x1ff //GETC
 			selfobj := reg.Get(lbase + B)
-			v := L.getFieldString(selfobj, L.rkString(C))
+			key := L.rkString(C)
+			v := L.getFieldString(selfobj, key)
 			// this section is inlined by go-inline
 			// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 			{
@@ -823,6 +917,12 @@ func init() {
 					rg.top = regi + 1
 				}
 			}
+			// Track source for method calls - this is a method access
+			// For methods, always save the object source
+			if L.lastValueSource != "" && !strings.HasPrefix(L.lastValueSource, "field ") && !strings.HasPrefix(L.lastValueSource, "method ") {
+				L.lastObjectSource = L.lastValueSource
+			}
+			L.lastValueSource = fmt.Sprintf("method '%s'", key)
 			return 0
 		},
 		opArith,   // OP_ADD
@@ -914,6 +1014,15 @@ func init() {
 			RA := lbase + A
 			B := int(inst & 0x1ff) //GETB
 			unaryv := L.rkValue(B)
+			// Get source for error messages
+			var source string
+			if B < 256 {
+				// Register
+				source = L.getRegValueSource(lbase + B)
+				if source == "" {
+					source = getRegLocalSource(L, lbase+B)
+				}
+			}
 			if nm, ok := unaryv.(LNumber); ok {
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
@@ -984,10 +1093,18 @@ func init() {
 							}
 						}
 					} else {
-						L.RaiseError("__unm undefined")
+						if source != "" {
+							L.RaiseError("__unm undefined (%s)", source)
+						} else {
+							L.RaiseError("__unm undefined")
+						}
 					}
 				} else {
-					L.RaiseError("__unm undefined")
+					if source != "" {
+						L.RaiseError("__unm undefined (%s)", source)
+					} else {
+						L.RaiseError("__unm undefined")
+					}
 				}
 			}
 			return 0
@@ -1146,7 +1263,7 @@ func init() {
 						}
 					}
 				} else {
-					L.RaiseError("__len undefined")
+					L.RaiseError("attempt to get length of a %s value", lv.Type().String())
 				}
 			}
 			return 0
@@ -1367,7 +1484,31 @@ func init() {
 					ls.reg.Insert(fn, cf.LocalBase)
 				}
 				if cf.Fn == nil {
-					ls.RaiseError("attempt to call a " + lv.Type().String() + " value")
+					// Check if this is a method call (field access followed by call with self)
+					source := ls.lastValueSource
+					if source != "" && nargs >= 1 {
+						// Check if first argument is a table (self argument for method call)
+						selfArg := ls.reg.Get(RA + 1)
+						if _, ok := selfArg.(*LTable); ok {
+							// Change "field 'x'" to "method 'x'" for method calls
+							if len(source) > 7 && source[:7] == "field '" {
+								source = "method '" + source[7:]
+							}
+						}
+					}
+					if source != "" {
+						// For method calls, just use the method name
+						// For field calls, include the object source (e.g., "field 'bbb' (global 'aaa')")
+						if strings.HasPrefix(source, "method ") {
+							ls.RaiseError("attempt to call a %s value (%s)", lv.Type().String(), source)
+						} else if ls.lastObjectSource != "" {
+							ls.RaiseError("attempt to call a %s value (%s (%s))", lv.Type().String(), source, ls.lastObjectSource)
+						} else {
+							ls.RaiseError("attempt to call a %s value (%s)", lv.Type().String(), source)
+						}
+					} else {
+						ls.RaiseError("attempt to call a " + lv.Type().String() + " value")
+					}
 				}
 				if ls.stack.IsFull() {
 					ls.RaiseError("stack overflow")
@@ -1500,7 +1641,27 @@ func init() {
 				callable, meta = L.metaCall(lv)
 			}
 			if callable == nil {
-				L.RaiseError("attempt to call a " + lv.Type().String() + " value")
+				// Check if this is a method call (field access followed by call with self)
+				source := L.lastValueSource
+				nargs := B - 1
+				if B == 0 {
+					nargs = reg.Top() - (RA + 1)
+				}
+				if source != "" && nargs >= 1 {
+					// Check if first argument is a table (self argument for method call)
+					selfArg := reg.Get(RA + 1)
+					if _, ok := selfArg.(*LTable); ok {
+						// Change "field 'x'" to "method 'x'" for method calls
+						if len(source) > 7 && source[:7] == "field '" {
+							source = "method '" + source[7:]
+						}
+					}
+				}
+				if source != "" {
+					L.RaiseError("attempt to call a %s value (%s)", lv.Type().String(), source)
+				} else {
+					L.RaiseError("attempt to call a " + lv.Type().String() + " value")
+				}
 			}
 			// this section is inlined by go-inline
 			// source function is 'func (ls *LState) closeUpvalues(idx int) ' in '_state.go'
@@ -2428,7 +2589,7 @@ func opArith(L *LState, inst uint32, baseframe *callFrame) int { //OP_ADD, OP_SU
 			}
 		}
 	} else {
-		v := objectArith(L, opcode, lhs, rhs)
+		v := objectArith(L, opcode, lhs, rhs, lbase+B, lbase+C)
 		// this section is inlined by go-inline
 		// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
 		{
@@ -2451,6 +2612,34 @@ func opArith(L *LState, inst uint32, baseframe *callFrame) int { //OP_ADD, OP_SU
 		}
 	}
 	return 0
+}
+
+// getRegLocalSource returns the local variable name for a register value
+func getRegLocalSource(L *LState, regIdx int) string {
+	cf := L.currentFrame
+	if cf == nil || cf.Fn == nil || cf.Fn.Proto == nil {
+		return ""
+	}
+	proto := cf.Fn.Proto
+	lbase := cf.LocalBase
+	relRegIdx := regIdx - lbase
+	if relRegIdx < 0 {
+		return ""
+	}
+	for _, local := range proto.DbgLocals {
+		if local.StartPc <= cf.Pc && cf.Pc < local.EndPc {
+			if local.Register == relRegIdx {
+				return fmt.Sprintf("local '%s'", local.Name)
+			}
+		}
+	}
+	return ""
+}
+
+// getUpvalueSource returns the upvalue name if the register was loaded from an upvalue
+// This is tracked via lastValueSource by the GETUPVAL instruction
+func getUpvalueSource(L *LState) string {
+	return L.lastValueSource
 }
 
 func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP_BOR, OP_BXOR, OP_SHL, OP_SHR
@@ -2510,7 +2699,7 @@ func opBitwise(L *LState, inst uint32, baseframe *callFrame) int { //OP_BAND, OP
 	}
 
 	if !ok1 || !ok2 {
-		v := objectArith(L, opcode, lhs, rhs)
+		v := objectArith(L, opcode, lhs, rhs, lbase+B, lbase+C)
 		{
 			rg := reg
 			regi := RA
@@ -2691,7 +2880,7 @@ func numberArith(L *LState, opcode int, lhs, rhs LNumber) LNumber {
 	return LNumberInt(0)
 }
 
-func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
+func objectArith(L *LState, opcode int, lhs, rhs LValue, lhsReg, rhsReg int) LValue {
 	// Special check for floor division by zero
 	if opcode == OP_IDIV {
 		if rnum, ok := rhs.(LNumber); ok {
@@ -2738,6 +2927,8 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		event = "__shr"
 		eventType = "bitwise"
 	}
+	// Save lastValueSource before metaOp2 call (which may overwrite it)
+	savedLastValueSource := L.lastValueSource
 	op := L.metaOp2(lhs, rhs, event)
 	if _, ok := op.(*LFunction); ok {
 		L.reg.Push(op)
@@ -2746,6 +2937,8 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		L.Call(2, 1)
 		return L.reg.Pop()
 	}
+	// Restore lastValueSource for error messages
+	L.lastValueSource = savedLastValueSource
 	// Lua 5.3: coerce strings to numbers for arithmetic and bitwise operations
 	if str, ok := lhs.(LString); ok {
 		if lnum, err := parseNumber(string(str)); err == nil {
@@ -2762,8 +2955,37 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 			return numberArith(L, opcode, LNumber(v1), LNumber(v2))
 		}
 	}
-	L.RaiseError(fmt.Sprintf("attempt to perform %s operation between %s and %s",
-		eventType, lhs.Type().String(), rhs.Type().String()))
+	// Lua 5.3 compatible error message - indicate which value is problematic
+	// Check for local variable sources
+	lhsSource := getRegLocalSource(L, lhsReg)
+	rhsSource := getRegLocalSource(L, rhsReg)
+	// Check for global variable access through local _ENV (tracked in regValueSources)
+	if lhsSource == "" {
+		lhsSource = L.getRegValueSource(lhsReg)
+	}
+	if rhsSource == "" {
+		rhsSource = L.getRegValueSource(rhsReg)
+	}
+	// Use lastValueSource for upvalues (set by GETUPVAL instruction)
+	if lhsSource == "" && lhs.Type() == LTNil && L.lastValueSource != "" &&
+		strings.HasPrefix(L.lastValueSource, "upvalue ") {
+		lhsSource = L.lastValueSource
+	}
+	if rhsSource == "" && rhs.Type() == LTNil && L.lastValueSource != "" &&
+		strings.HasPrefix(L.lastValueSource, "upvalue ") {
+		rhsSource = L.lastValueSource
+	}
+	if lhs.Type() == LTNil && lhsSource != "" {
+		L.RaiseError("attempt to perform %s operation on a nil value (%s)", eventType, lhsSource)
+	} else if rhs.Type() == LTNil && rhsSource != "" {
+		L.RaiseError("attempt to perform %s operation on a nil value (%s)", eventType, rhsSource)
+	} else if lhs.Type() != LTNumber && lhsSource != "" {
+		L.RaiseError("attempt to perform %s operation between %s (%s) and %s", eventType, lhs.Type().String(), lhsSource, rhs.Type().String())
+	} else if rhs.Type() != LTNumber && rhsSource != "" {
+		L.RaiseError("attempt to perform %s operation between %s and %s (%s)", eventType, lhs.Type().String(), rhs.Type().String(), rhsSource)
+	} else {
+		L.RaiseError("attempt to perform %s operation between %s and %s", eventType, lhs.Type().String(), rhs.Type().String())
+	}
 
 	return LNil
 }
@@ -2784,7 +3006,14 @@ func stringConcat(L *LState, total, last int) LValue {
 				total--
 				i--
 			} else {
-				L.RaiseError("cannot perform concat operation between %v and %v", lhs.Type().String(), rhs.Type().String())
+				// Lua 5.3 compatible error message format
+				if !LVCanConvToString(lhs) && !LVCanConvToString(rhs) {
+					L.RaiseError("attempt to concat a %s value", lhs.Type().String())
+				} else if !LVCanConvToString(lhs) {
+					L.RaiseError("attempt to concat a %s value", lhs.Type().String())
+				} else {
+					L.RaiseError("attempt to concat a %s value", rhs.Type().String())
+				}
 				return LNil
 			}
 		} else {

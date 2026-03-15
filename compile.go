@@ -451,6 +451,13 @@ func (fc *funcContext) CheckUnresolvedGoto() {
 // В Lua 5.3 все глобальные переменные доступны через _ENV[varname]
 // _ENV следует правилам лексической видимости
 func (fc *funcContext) getEnvUpvalue() int {
+	// Проверяем, есть ли _ENV как локальная переменная в текущем контексте
+	if fc.FindLocalVar("_ENV") > -1 {
+		// _ENV локальная переменная - не можем использовать upvalue
+		// Возвращаем -1 как сигнал, что нужно использовать другой подход
+		return -1
+	}
+
 	// Проверяем, есть ли _ENV в текущем контексте (как upvalue)
 	idx := fc.Upvalues.Find("_ENV")
 	if idx != -1 {
@@ -460,9 +467,15 @@ func (fc *funcContext) getEnvUpvalue() int {
 	// Ищем _ENV в родительских контекстах (lexical scoping)
 	current := fc.Parent
 	for current != nil {
+		// Проверяем, нет ли _ENV как локальной переменной в родителе
+		if current.FindLocalVar("_ENV") > -1 {
+			// _ENV локальная переменная в родителе - не можем использовать upvalue
+			return -1
+		}
+
 		idx = current.Upvalues.Find("_ENV")
 		if idx != -1 {
-			// Найдено в родителе, регистрируем как upvalue в текущем контексте
+			// Найдено в upvalues родителя, регистрируем как upvalue в текущем контексте
 			return fc.Upvalues.RegisterUnique("_ENV")
 		}
 		current = current.Parent
@@ -470,6 +483,18 @@ func (fc *funcContext) getEnvUpvalue() int {
 
 	// _ENV не найден - это main chunk, регистрируем как первый upvalue
 	return fc.Upvalues.RegisterUnique("_ENV")
+}
+
+// findLocalEnvInParent ищет локальную переменную _ENV в родительских контекстах
+func findLocalEnvInParent(fc *funcContext, name string) int {
+	current := fc.Parent
+	for current != nil {
+		if idx := current.FindLocalVar(name); idx >= 0 {
+			return idx
+		}
+		current = current.Parent
+	}
+	return -1
 }
 
 func (fc *funcContext) AddUnresolvedGoto(label *gotoLabelDesc) {
@@ -595,7 +620,7 @@ func (fc *funcContext) BlockLocalVarsCount() int {
 
 func (fc *funcContext) RegisterLocalVar(name string) int {
 	ret := fc.Block.LocalVars.Register(name)
-	fc.Proto.DbgLocals = append(fc.Proto.DbgLocals, &DbgLocalInfo{Name: name, StartPc: fc.Code.LastPC() + 1})
+	fc.Proto.DbgLocals = append(fc.Proto.DbgLocals, &DbgLocalInfo{Name: name, StartPc: fc.Code.LastPC() + 1, Register: ret})
 	fc.SetRegTop(fc.RegTop() + 1)
 	return ret
 }
@@ -1265,7 +1290,24 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 			// GETTABUP sreg = _ENV[key] (key - RK-кодированная константа)
 			envupvalue := context.getEnvUpvalue()
 			keyindex := context.ConstIndex(LString(ex.Value))
-			code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
+			if envupvalue >= 0 {
+				// _ENV доступен через upvalue
+				code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
+			} else {
+				// _ENV локальная переменная - используем GETTABLE
+				envreg := context.FindLocalVar("_ENV")
+				if envreg < 0 {
+					// Ищем _ENV в родительских контекстах
+					envreg = findLocalEnvInParent(context, "_ENV")
+				}
+				if envreg >= 0 {
+					code.AddABC(OP_GETTABLE, sreg, envreg, opRkAsk(keyindex), sline(ex))
+				} else {
+					// Fallback to GETTABUP with global _ENV
+					envupvalue = context.Upvalues.RegisterUnique("_ENV")
+					code.AddABC(OP_GETTABUP, sreg, envupvalue, opRkAsk(keyindex), sline(ex))
+				}
+			}
 		case ecUpvalue:
 			code.AddABC(OP_GETUPVAL, sreg, context.Upvalues.RegisterUnique(ex.Value), 0, sline(ex))
 		case ecLocal:
@@ -2072,6 +2114,17 @@ func getIdentRefType(context *funcContext, current *funcContext, expr *ast.Ident
 		// _ENV не найден в родителях - это глобальная переменная
 		// (будет зарегистрирован как upvalue при компиляции)
 		return ecGlobal
+	}
+
+	// Проверка: если _ENV переопределён локально в текущем или родительском контексте,
+	// то обращение к "глобальной" переменной должно использовать локальный _ENV
+	// Это важно для кода вида: local _ENV = {x={}}; a = a + 1
+	for p := current; p != nil; p = p.Parent {
+		if p.FindLocalVar("_ENV") > -1 {
+			// _ENV переопределён локально - это глобальная переменная,
+			// но доступ к ней будет через локальный _ENV
+			return ecGlobal
+		}
 	}
 
 	// Рекурсивно проверяем родительские контексты

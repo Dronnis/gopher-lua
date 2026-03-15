@@ -889,7 +889,7 @@ func opArith(L *LState, inst uint32, baseframe *callFrame) int { //OP_ADD, OP_SU
 		v := numberArith(L, opcode, LNumber(v1), LNumber(v2))
 		// +inline-call reg.SetNumber RA v
 	} else {
-		v := objectArith(L, opcode, lhs, rhs)
+		v := objectArith(L, opcode, lhs, rhs, lbase+B, lbase+C)
 		// +inline-call reg.Set RA v
 	}
 	return 0
@@ -926,7 +926,7 @@ func numberArith(L *LState, opcode int, lhs, rhs LNumber) LNumber {
 	return LNumber(0)
 }
 
-func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
+func objectArith(L *LState, opcode int, lhs, rhs LValue, lhsReg, rhsReg int) LValue {
 	event := ""
 	switch opcode {
 	case OP_ADD:

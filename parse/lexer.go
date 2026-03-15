@@ -41,9 +41,9 @@ func (e *Error) Error() string {
 	}
 	// If message already contains "near", don't add token
 	if strings.Contains(e.Message, " near ") {
-		return fmt.Sprintf("%s:%d: %s\n", source, line, e.Message)
+		return fmt.Sprintf("%s:%d: %s", source, line, e.Message)
 	}
-	return fmt.Sprintf("%s:%d: %s near '%s'\n", source, line, e.Message, e.Token)
+	return fmt.Sprintf("%s:%d: %s near '%s'", source, line, e.Message, e.Token)
 }
 
 func writeChar(buf *bytes.Buffer, c int) { buf.WriteByte(byte(c)) }
