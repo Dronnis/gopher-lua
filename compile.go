@@ -467,10 +467,10 @@ func (fc *funcContext) getEnvUpvalue() int {
 	// Ищем _ENV в родительских контекстах (lexical scoping)
 	current := fc.Parent
 	for current != nil {
-		// Проверяем, нет ли _ENV как локальной переменной в родителе
+		// Проверяем, есть ли _ENV как локальная переменная в родителе
 		if current.FindLocalVar("_ENV") > -1 {
-			// _ENV локальная переменная в родителе - не можем использовать upvalue
-			return -1
+			// _ENV локальная переменная в родителе - захватываем как upvalue
+			return fc.Upvalues.RegisterUnique("_ENV")
 		}
 
 		idx = current.Upvalues.Find("_ENV")
@@ -495,6 +495,44 @@ func findLocalEnvInParent(fc *funcContext, name string) int {
 		current = current.Parent
 	}
 	return -1
+}
+
+// findAndCaptureLocalEnvInParent ищет локальную переменную в родительских контекстах
+// и захватывает её как upvalue в текущем контексте
+func findAndCaptureLocalEnvInParent(fc *funcContext, name string) int {
+	current := fc.Parent
+	for current != nil {
+		if idx := current.FindLocalVar(name); idx >= 0 {
+			// Найдено как локальная переменная в родителе - захватываем как upvalue
+			return fc.Upvalues.RegisterUnique(name)
+		}
+		current = current.Parent
+	}
+	return -1
+}
+
+// captureEnvUpvalue захватывает _ENV из родительского контекста как upvalue
+func captureEnvUpvalue(fc *funcContext) {
+	// Проверяем, есть ли _ENV уже в upvalues
+	if fc.Upvalues.Find("_ENV") != -1 {
+		return
+	}
+
+	// Ищем _ENV в родительских контекстах
+	current := fc.Parent
+	for current != nil {
+		// Проверяем, есть ли _ENV как локальная переменная
+		if current.FindLocalVar("_ENV") >= 0 {
+			fc.Upvalues.RegisterUnique("_ENV")
+			return
+		}
+		// Проверяем, есть ли _ENV в upvalues родителя
+		if current.Upvalues.Find("_ENV") != -1 {
+			fc.Upvalues.RegisterUnique("_ENV")
+			return
+		}
+		current = current.Parent
+	}
 }
 
 func (fc *funcContext) AddUnresolvedGoto(label *gotoLabelDesc) {
@@ -873,10 +911,26 @@ func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 			}
 		case ecGlobal:
 			// Lua 5.3: присваивание глобальной переменной через _ENV[key] = value
-			// SETTABUP _ENV[key] = value (key - RK-кодированная константа)
 			envupvalue := context.getEnvUpvalue()
 			keyindex := context.ConstIndex(LString(ex.(*ast.IdentExpr).Value))
-			code.AddABC(OP_SETTABUP, envupvalue, opRkAsk(keyindex), reg, sline(ex))
+			if envupvalue >= 0 {
+				// _ENV доступен через upvalue
+				code.AddABC(OP_SETTABUP, envupvalue, opRkAsk(keyindex), reg, sline(ex))
+			} else {
+				// _ENV локальная переменная - используем SETTABLE
+				envreg := context.FindLocalVar("_ENV")
+				if envreg < 0 {
+					// Ищем _ENV в родительских контекстах и захватываем как upvalue
+					envreg = findAndCaptureLocalEnvInParent(context, "_ENV")
+				}
+				if envreg >= 0 {
+					code.AddABC(OP_SETTABLE, envreg, opRkAsk(keyindex), reg, sline(ex))
+				} else {
+					// Fallback to SETTABUP with global _ENV
+					envupvalue = context.Upvalues.RegisterUnique("_ENV")
+					code.AddABC(OP_SETTABUP, envupvalue, opRkAsk(keyindex), reg, sline(ex))
+				}
+			}
 			reg -= 1
 		case ecUpvalue:
 			code.AddABC(OP_SETUPVAL, reg, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
@@ -1304,8 +1358,8 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 				// _ENV локальная переменная - используем GETTABLE
 				envreg := context.FindLocalVar("_ENV")
 				if envreg < 0 {
-					// Ищем _ENV в родительских контекстах
-					envreg = findLocalEnvInParent(context, "_ENV")
+					// Ищем _ENV в родительских контекстах и захватываем как upvalue
+					envreg = findAndCaptureLocalEnvInParent(context, "_ENV")
 				}
 				if envreg >= 0 {
 					if keyindex <= opMaxIndexRk {
@@ -1668,8 +1722,10 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 	if context.Parent == nil {
 		// Main chunk - регистрируем _ENV как первый upvalue
 		context.Upvalues.RegisterUnique("_ENV")
+	} else {
+		// Вложенная функция - захватываем _ENV из родительского контекста
+		captureEnvUpvalue(context)
 	}
-	// Для вложенных функций _ENV будет найден через getIdentRefType и захвачен как upvalue
 
 	compileChunk(context, funcexpr.Stmts, false)
 
