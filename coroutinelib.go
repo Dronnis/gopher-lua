@@ -73,6 +73,9 @@ func coYield(L *LState) int {
 		return 0
 	}
 	// Check if we're trying to yield across a C boundary
+	// In Lua 5.3+, yield is allowed inside pcall/xpcall for Lua functions
+	// But yield is still not allowed directly inside C functions (like table.sort)
+	// We always disallow yield across C boundary
 	if L.nCcalls > 0 {
 		L.raiseError(1, "attempt to yield across metamethod/c-call boundary")
 		return 0

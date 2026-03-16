@@ -29,8 +29,8 @@ func tableSort(L *LState) int {
 		sorter.Fn = L.CheckFunction(2)
 	}
 	L.nCcalls++
+	defer func() { L.nCcalls-- }()
 	sort.Sort(sorter)
-	L.nCcalls--
 	return 0
 }
 

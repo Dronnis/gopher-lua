@@ -511,6 +511,11 @@ func basePCall(L *LState) int {
 		return 2
 	}
 	nargs := L.GetTop() - 1
+
+	// Increment pcallLevel to allow yield inside pcall (Lua 5.3 behavior)
+	L.pcallLevel++
+	defer func() { L.pcallLevel-- }()
+
 	if err := L.PCall(nargs, MultRet, nil); err != nil {
 		L.Push(LFalse)
 		if aerr, ok := err.(*ApiError); ok {
@@ -752,9 +757,22 @@ func baseXPCall(L *LState) int {
 	fn := L.CheckFunction(1)
 	errfunc := L.CheckFunction(2)
 
-	top := L.GetTop()
+	// Save original top before we start modifying the stack
+	origTop := L.GetTop()
+	nargs := origTop - 2 // Number of additional arguments
+
+	// Push the function to call
 	L.Push(fn)
-	if err := L.PCall(0, MultRet, errfunc); err != nil {
+	// Push additional arguments (from index 3 onwards)
+	for i := 3; i <= origTop; i++ {
+		L.Push(L.Get(i))
+	}
+
+	// Increment pcallLevel to allow yield inside xpcall (Lua 5.3 behavior)
+	L.pcallLevel++
+	defer func() { L.pcallLevel-- }()
+
+	if err := L.PCall(nargs, MultRet, errfunc); err != nil {
 		L.Push(LFalse)
 		if aerr, ok := err.(*ApiError); ok {
 			L.Push(aerr.Object)
@@ -763,8 +781,15 @@ func baseXPCall(L *LState) int {
 		}
 		return 2
 	} else {
-		L.Insert(LTrue, top+1)
-		return L.GetTop() - top
+		// Results are now on the stack starting from position origTop+1
+		// We need to insert true at the beginning of results
+		nresults := L.GetTop() - origTop
+		if nresults > 0 {
+			L.Insert(LTrue, origTop+1)
+		} else {
+			L.Push(LTrue)
+		}
+		return L.GetTop() - origTop
 	}
 }
 

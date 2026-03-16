@@ -194,6 +194,9 @@ type LState struct {
 	// nCcalls tracks nested C calls for yield protection
 	// When > 0, yield is not allowed (yield across C boundary)
 	nCcalls int
+	// pcallLevel tracks nested pcall/xpcall calls for yield support
+	// When > 0, yield is allowed inside pcall/xpcall (Lua 5.3 behavior)
+	pcallLevel int
 	// lastValueSource tracks the source of the last loaded value for better error messages
 	// Format: "global 'name'", "field 'name'", "method 'name'", "upvalue 'name'", "local 'name'", ""
 	lastValueSource string

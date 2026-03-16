@@ -197,7 +197,11 @@ func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
 		L.RaiseError("can not yield from outside of a coroutine")
 	}
 	L.G.CurrentThread = parent
-	L.Parent = nil
+	// Don't clear L.Parent if we're inside pcall/xpcall (Lua 5.3 behavior)
+	// This allows yield to work correctly inside pcall/xpcall
+	if L.pcallLevel == 0 {
+		L.Parent = nil
+	}
 	if !L.wrapped {
 		if haserror {
 			parent.Push(LFalse)
@@ -206,10 +210,14 @@ func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
 		}
 	}
 	L.XMoveTo(parent, nargs)
-	L.stack.Pop()
-	offset := L.currentFrame.LocalBase - L.currentFrame.ReturnBase
-	L.currentFrame = L.stack.Last()
-	L.reg.SetTop(L.reg.Top() - offset) // remove 'yield' function(including tailcalled functions)
+	// Don't pop the stack if we're inside pcall/xpcall
+	// This allows the call frame to be resumed later
+	if L.pcallLevel == 0 || kill {
+		L.stack.Pop()
+		offset := L.currentFrame.LocalBase - L.currentFrame.ReturnBase
+		L.currentFrame = L.stack.Last()
+		L.reg.SetTop(L.reg.Top() - offset) // remove 'yield' function(including tailcalled functions)
+	}
 	if kill {
 		L.kill()
 	}
