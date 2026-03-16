@@ -277,6 +277,12 @@ func loadaux(L *LState, reader io.Reader, chunkname string, env LValue) int {
 						value:  env,
 						closed: true,
 					}
+				} else if len(fn.Proto.DbgUpvalues) == 0 {
+					// Binary chunk without DbgUpvalues - assume first upvalue is _ENV
+					fn.Upvalues[0] = &Upvalue{
+						value:  env,
+						closed: true,
+					}
 				}
 			} else {
 				// If the function has no upvalues, create one for _ENV

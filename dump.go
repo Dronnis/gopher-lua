@@ -19,33 +19,43 @@ const (
 	luaIntTypeSize     = 8 // sizeof(lua_Integer)
 	luaNumberSize      = 8 // sizeof(lua_Number)
 	luaNumberFormat    = 0 // 0 = float, 1 = integer
+	luacInt            = 0x5678
+	luacNum            = 0x3706404140000000 // 370.5 in IEEE 754 double
 )
 
 // dumpProto serializes a FunctionProto to binary format (Lua 5.3 compatible)
 func dumpProto(proto *FunctionProto, strip bool) []byte {
 	buf := &bytes.Buffer{}
 
-	// Write Lua 5.3 header (12 bytes)
+	// Write Lua 5.3 header (28 bytes)
 	// Signature: "\x1bLua" (4 bytes)
-	// Version: 0x51 (1 byte)
+	// Version: 0x53 (1 byte)
 	// Format: 0 (1 byte)
-	// Endianness: 1 = little endian (1 byte)
+	// Data: 6 bytes (version-specific data)
 	// int size: 4 (1 byte)
 	// size_t size: 8 (1 byte)
 	// instruction size: 4 (1 byte)
 	// lua_Integer size: 8 (1 byte)
 	// lua_Number size: 8 (1 byte)
 	// number format: 0 = float (1 byte)
+	// LUAC_INT: 8 bytes
+	// LUAC_NUM: 8 bytes (optional, may have padding)
 	buf.WriteString(luaSignature)
 	buf.WriteByte(luaVersion53)
 	buf.WriteByte(luaFormat)
-	buf.WriteByte(luaData)
+	// Write 6 bytes of version-specific data
+	// Lua 5.3 uses: \x19\x93\r\n\x1a\n
+	buf.WriteString("\x19\x93\r\n\x1a\n")
 	buf.WriteByte(luaIntSize)
 	buf.WriteByte(luaSizeTSize)
 	buf.WriteByte(luaInstructionSize)
 	buf.WriteByte(luaIntTypeSize)
 	buf.WriteByte(luaNumberSize)
 	buf.WriteByte(luaNumberFormat)
+	// Write LUAC_INT for endianness check
+	binary.Write(buf, binary.LittleEndian, luacInt)
+	// Write LUAC_NUM for endianness check
+	binary.Write(buf, binary.LittleEndian, luacNum)
 
 	// Write function prototype
 	writeFunction(buf, proto, strip)
@@ -181,13 +191,28 @@ func undumpProto(L *LState, data []byte) (*FunctionProto, error) {
 	if format != luaFormat {
 		return nil, errors.New("format mismatch")
 	}
-	endian, _ := buf.ReadByte()
+	// Read 6 bytes of version-specific data (Lua 5.3+)
+	dataBytes := make([]byte, 6)
+	if _, err := io.ReadFull(buf, dataBytes); err != nil {
+		return nil, errors.New("invalid chunk: cannot read header data")
+	}
 	intSize, _ := buf.ReadByte()
 	sizeTSize, _ := buf.ReadByte()
 	instSize, _ := buf.ReadByte()
 	intTypeSize, _ := buf.ReadByte() // lua_Integer size (Lua 5.3+)
 	numberSize, _ := buf.ReadByte()
 	numberFormat, _ := buf.ReadByte()
+	// Read LUAC_INT (8 bytes) for endianness check
+	luacIntBytes := make([]byte, 8)
+	if _, err := io.ReadFull(buf, luacIntBytes); err != nil {
+		return nil, errors.New("invalid chunk: cannot read LUAC_INT")
+	}
+	// Read LUAC_NUM (8 bytes) for endianness check
+	luacNumBytes := make([]byte, 8)
+	if _, err := io.ReadFull(buf, luacNumBytes); err != nil {
+		return nil, errors.New("invalid chunk: cannot read LUAC_NUM")
+	}
+
 	if intSize != 4 && intSize != 8 {
 		return nil, errors.New("unsupported int size")
 	}
@@ -200,7 +225,7 @@ func undumpProto(L *LState, data []byte) (*FunctionProto, error) {
 	if numberSize != 8 {
 		return nil, errors.New("unsupported number size")
 	}
-	proto, err := readFunction(L, buf, endian, intSize, sizeTSize, numberSize, numberFormat)
+	proto, err := readFunction(L, buf, 1, intSize, sizeTSize, numberSize, numberFormat)
 	if err != nil {
 		return nil, err
 	}

@@ -2057,13 +2057,25 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 			return nil, newApiErrorE(ApiErrorSyntax, errors.New(err.Error()))
 		}
 		fn := newLFunctionL(proto, ls.currentEnv(), int(proto.NumUpvalues))
-		// Initialize _ENV upvalue
-		for i := 0; i < len(fn.Upvalues) && i < len(proto.DbgUpvalues); i++ {
-			if proto.DbgUpvalues[i] == "_ENV" {
+		// Initialize _ENV upvalue for binary chunks
+		// Binary chunks may not have DbgUpvalues, so we need to initialize _ENV manually
+		if proto.NumUpvalues > 0 {
+			// Check if DbgUpvalues is available
+			if len(proto.DbgUpvalues) > 0 {
+				for i := 0; i < len(fn.Upvalues) && i < len(proto.DbgUpvalues); i++ {
+					if proto.DbgUpvalues[i] == "_ENV" {
+						uv := &Upvalue{}
+						uv.closed = true
+						uv.value = ls.G.Global
+						fn.Upvalues[i] = uv
+					}
+				}
+			} else {
+				// No DbgUpvalues, assume first upvalue is _ENV
 				uv := &Upvalue{}
 				uv.closed = true
 				uv.value = ls.G.Global
-				fn.Upvalues[i] = uv
+				fn.Upvalues[0] = uv
 			}
 		}
 		return fn, nil
