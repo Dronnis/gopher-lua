@@ -29,25 +29,27 @@ func OpenTest(L *LState) int {
 }
 
 var testFuncs = map[string]LGFunction{
-	"totalmem":    testTotalMem,
-	"checkmemory": testCheckMemory,
-	"gccolor":     testGCColor,
-	"gcstate":     testGCState,
-	"gcstep":      testGCStep,
-	"gccount":     testGCCount,
-	"testC":       testTestC,
-	"makeCfunc":   testMakeCFunc,
-	"checkpanic":  testCheckPanic,
-	"d2s":         testD2S,
-	"s2d":         testS2D,
-	"newuserdata": testNewUserData,
+	"totalmem":     testTotalMem,
+	"checkmemory":  testCheckMemory,
+	"gccolor":      testGCColor,
+	"gcstate":      testGCState,
+	"gcstep":       testGCStep,
+	"gccount":      testGCCount,
+	"testC":        testTestC,
+	"makeCfunc":    testMakeCFunc,
+	"checkpanic":   testCheckPanic,
+	"d2s":          testD2S,
+	"s2d":          testS2D,
+	"newuserdata":  testNewUserData,
 	"pushuserdata": testPushUserData,
-	"topointer":   testToPointer,
-	"func2num":    testFunc2Num,
-	"objsize":     testObjSize,
-	"checkstack":  testCheckStack,
-	"listk":       testListK,
-	"listcode":    testListCode,
+	"topointer":    testToPointer,
+	"func2num":     testFunc2Num,
+	"objsize":      testObjSize,
+	"checkstack":   testCheckStack,
+	"listk":        testListK,
+	"listcode":     testListCode,
+	"int2fb":       testInt2Fb,
+	"fb2int":       testFb2Int,
 }
 
 // T.totalmem() -> total, blocks, maxmem
@@ -707,7 +709,7 @@ func parseIndex(s string, top int) int {
 // T.listk(func) -> list of constants
 func testListK(L *LState) int {
 	fn := L.CheckFunction(1)
-	
+
 	// Получаем прототип функции
 	var proto *FunctionProto
 	if fn.IsG {
@@ -716,13 +718,13 @@ func testListK(L *LState) int {
 		return 1
 	}
 	proto = fn.Proto
-	
+
 	// Создаём таблицу констант
 	klist := L.NewTable()
 	for i, k := range proto.Constants {
 		klist.RawSetInt(i+1, k)
 	}
-	
+
 	L.Push(klist)
 	return 1
 }
@@ -730,7 +732,7 @@ func testListK(L *LState) int {
 // T.listcode(func) -> list of code instructions
 func testListCode(L *LState) int {
 	fn := L.CheckFunction(1)
-	
+
 	// Получаем прототип функции
 	var proto *FunctionProto
 	if fn.IsG {
@@ -739,7 +741,7 @@ func testListCode(L *LState) int {
 		return 1
 	}
 	proto = fn.Proto
-	
+
 	// Создаём таблицу инструкций
 	codelist := L.NewTable()
 	for i, code := range proto.Code {
@@ -749,7 +751,7 @@ func testListCode(L *LState) int {
 		argC := getArgC(code)
 		argBx := getArgBx(code)
 		argSbx := getArgSbx(code)
-		
+
 		// Форматируем в зависимости от типа инструкции
 		format := getOpFormat(op)
 		var instr string
@@ -763,10 +765,10 @@ func testListCode(L *LState) int {
 		default:
 			instr = fmt.Sprintf("%d - %s %d %d %d", i+1, opcodeName(op), argA, argB, argC)
 		}
-		
+
 		codelist.RawSetInt(i+1, LString(instr))
 	}
-	
+
 	L.Push(codelist)
 	return 1
 }
@@ -935,4 +937,54 @@ func getOpFormat(op int) string {
 	default:
 		return "ABC"
 	}
+}
+
+// T.int2fb(n) -> encoded_value, actual_size
+// Converts a number to Lua 5.3 table size encoding
+func testInt2Fb(L *LState) int {
+	n := L.CheckInt(1)
+
+	// Lua 5.3 table size encoding
+	// For values < 8: direct encoding
+	// For values >= 8: encoded as (e+1)*32 + (m-8) where e is exponent and m is mantissa
+	if n < 8 {
+		L.Push(LNumberInt(int64(n)))
+		L.Push(LNumberInt(int64(n)))
+		return 2
+	}
+
+	// Find the encoding
+	encoded := int2Fb(n)
+
+	// Calculate the actual size from the encoding
+	var actual int
+	if encoded < 8 {
+		actual = encoded
+	} else {
+		e := (encoded >> 3) - 1
+		m := (encoded & 7) + 8
+		actual = m << e
+	}
+
+	L.Push(LNumberInt(int64(encoded)))
+	L.Push(LNumberInt(int64(actual)))
+	return 2
+}
+
+// T.fb2int(encoded) -> actual_size
+// Converts Lua 5.3 table size encoding back to actual size
+func testFb2Int(L *LState) int {
+	encoded := L.CheckInt(1)
+
+	var actual int
+	if encoded < 8 {
+		actual = encoded
+	} else {
+		e := (encoded >> 3) - 1
+		m := (encoded & 7) + 8
+		actual = m << e
+	}
+
+	L.Push(LNumberInt(int64(actual)))
+	return 1
 }
