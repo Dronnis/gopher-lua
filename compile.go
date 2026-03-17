@@ -434,6 +434,10 @@ func newFuncContext(sourcename string, parent *funcContext) *funcContext {
 		unresolvedGotos: map[int]*gotoLabelDesc{},
 	}
 	fc.Blocks = []*codeBlock{fc.Block}
+	// Lua 5.3: main chunk always has _ENV as first upvalue for global variable access
+	if parent == nil {
+		fc.Upvalues.RegisterUnique("_ENV")
+	}
 	return fc
 }
 
@@ -1717,15 +1721,9 @@ func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *e
 		context.Proto.IsVarArg |= VarArgIsVarArg
 	}
 
-	// Lua 5.3: _ENV всегда первый upvalue для main chunk
-	// Вложенные функции наследуют _ENV от родителя через lexical scoping
-	if context.Parent == nil {
-		// Main chunk - регистрируем _ENV как первый upvalue
-		context.Upvalues.RegisterUnique("_ENV")
-	} else {
-		// Вложенная функция - захватываем _ENV из родительского контекста
-		captureEnvUpvalue(context)
-	}
+	// Lua 5.3: _ENV is only registered as upvalue if the function actually uses global variables
+	// _ENV is captured lazily when accessing global variables via getIdentRefType
+	// Don't pre-register _ENV here - it will be registered when needed
 
 	compileChunk(context, funcexpr.Stmts, false)
 

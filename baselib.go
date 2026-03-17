@@ -216,7 +216,12 @@ func baseDoFile(L *LState) int {
 		L.Panic(L)
 	}
 	L.Push(fn)
-	L.Call(0, MultRet)
+	// Lua 5.3: dofile должен поддерживать yield внутри загруженной функции
+	// Используем PCall вместо Call для поддержки coroutine.wrap(dofile)
+	if err := L.PCall(0, MultRet, nil); err != nil {
+		L.Push(LString(err.Error()))
+		L.Panic(L)
+	}
 	return L.GetTop() - top
 }
 

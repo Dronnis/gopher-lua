@@ -68,15 +68,22 @@ func coIsYieldable(L *LState) int {
 
 func coYield(L *LState) int {
 	// Check if we're in the main thread or not in a coroutine context
-	if L.Parent == nil {
+	// In Lua 5.3+, yield is allowed if:
+	// 1. We're not in the main thread (L.Parent != nil), OR
+	// 2. The current thread is a wrapped coroutine (L.wrapped == true), OR
+	// 3. The current running thread (G.CurrentThread) is different from main thread
+	inCoroutine := L.Parent != nil || L.wrapped || (L.G.CurrentThread != nil && L.G.CurrentThread != L.G.MainThread)
+
+	if !inCoroutine {
 		L.raiseError(1, "can not yield from outside of a coroutine")
 		return 0
 	}
 	// Check if we're trying to yield across a C boundary
 	// In Lua 5.3+, yield is allowed inside pcall/xpcall for Lua functions
 	// But yield is still not allowed directly inside C functions (like table.sort)
-	// We always disallow yield across C boundary
-	if L.nCcalls > 0 {
+	// We allow yield from C functions if we're in a coroutine context (Lua 5.3 behavior)
+	// Only disallow yield across metamethod boundary (nCcalls > 1)
+	if L.nCcalls > 1 {
 		L.raiseError(1, "attempt to yield across metamethod/c-call boundary")
 		return 0
 	}

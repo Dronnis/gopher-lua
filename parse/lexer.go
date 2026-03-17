@@ -318,8 +318,9 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 			token := "\\x"
 			if h1 != EOF {
 				token += string(rune(h1))
-				// Include h2 only if h1 was hex (partial hex escape)
-				if isHex(h1) && h2 != EOF {
+				// Always include h2 if it exists (Lua 5.3 behavior)
+				// This provides better context for error messages
+				if h2 != EOF {
 					token += string(rune(h2))
 				}
 			}
