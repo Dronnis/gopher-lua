@@ -251,7 +251,7 @@ func (sc *Scanner) scanString(quote int, buf *bytes.Buffer) error {
 			return sc.Error(buf.String(), "unterminated string")
 		}
 		if ch == '\\' {
-			if err := sc.scanEscape(ch, buf); err != nil {
+			if err := sc.scanEscape(ch, buf, quote); err != nil {
 				return err
 			}
 		} else {
@@ -262,7 +262,7 @@ func (sc *Scanner) scanString(quote int, buf *bytes.Buffer) error {
 	return nil
 }
 
-func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
+func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer, quote int) error {
 	ch = sc.Next()
 	switch ch {
 	case 'a':
@@ -282,9 +282,23 @@ func (sc *Scanner) scanEscape(ch int, buf *bytes.Buffer) error {
 	case '\\':
 		buf.WriteByte('\\')
 	case '"':
-		buf.WriteByte('"')
+		// В Lua, \" это " только в строках с двойными кавычками
+		// В строках с одинарными кавычками, \" это \ + "
+		if quote == '"' {
+			buf.WriteByte('"')
+		} else {
+			buf.WriteByte('\\')
+			buf.WriteByte('"')
+		}
 	case '\'':
-		buf.WriteByte('\'')
+		// В Lua, \' это ' только в строках с одинарными кавычками
+		// В строках с двойными кавычками, \' это \ + '
+		if quote == '\'' {
+			buf.WriteByte('\'')
+		} else {
+			buf.WriteByte('\\')
+			buf.WriteByte('\'')
+		}
 	case 'z':
 		// \z skips all following whitespace characters (Lua 5.3 feature)
 		for {

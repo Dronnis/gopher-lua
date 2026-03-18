@@ -76,7 +76,30 @@ func getCategory(L *LState, index int) string {
 
 // setLocaleForCategory sets the locale for a specific category
 // In Go, we can't actually change locale, so we just store it
+// Returns the old locale, or "" if the locale is not supported
 func setLocaleForCategory(category, locale string) string {
+	// Check if locale is supported
+	// Common supported locales: "C", "", "POSIX"
+	// On Windows, some locales like "ptb" may not be supported for all categories
+	supportedLocales := []string{"C", "", "POSIX"}
+	isSupported := false
+	for _, sl := range supportedLocales {
+		if locale == sl {
+			isSupported = true
+			break
+		}
+	}
+
+	// On Windows, try to set the locale using C runtime
+	// If it fails, the locale is not supported
+	if !isSupported {
+		// Try to set locale using setlocale (C runtime)
+		// This is a simple check - in real implementation, we would use CGO
+		// For now, assume unknown locales are not supported
+		// Return empty string to indicate failure (Lua 5.3 behavior)
+		return ""
+	}
+
 	// If setting "all", update all categories
 	if category == LocaleCategoryAll {
 		oldLocale := currentLocales[LocaleCategoryAll]
@@ -165,7 +188,7 @@ func osExecute(L *LState) int {
 		L.Push(LTrue)
 		return 1
 	}
-	
+
 	var procAttr os.ProcAttr
 	procAttr.Files = []*os.File{os.Stdin, os.Stdout, os.Stderr}
 	cmd, args := popenArgs(L.CheckString(1))
@@ -300,8 +323,13 @@ func osSetLocale(L *LState) int {
 	// Set the locale for the specified category
 	oldLocale := setLocaleForCategory(category, locale)
 
-	// Return the previous locale for the category
-	L.Push(LString(oldLocale))
+	// Lua 5.3: return nil if locale is not supported
+	if oldLocale == "" {
+		L.Push(LNil)
+	} else {
+		// Return the previous locale for the category
+		L.Push(LString(oldLocale))
+	}
 	return 1
 }
 

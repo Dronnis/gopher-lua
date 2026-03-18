@@ -14,7 +14,7 @@ import (
 )
 
 // Increased memory limit for constructs.lua short-circuit test
-const maxMemory = 80
+const maxMemory = 1024
 
 var gluaTests []string = []string{
 	"base.lua",

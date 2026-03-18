@@ -417,12 +417,18 @@ func (ls *LState) DoString(source string) error {
 
 // ToStringMeta returns string representation of given LValue.
 // This method calls the `__tostring` meta method if defined.
+// In Lua 5.3, __tostring must return a string, otherwise raises an error.
 func (ls *LState) ToStringMeta(lv LValue) LValue {
 	if fn, ok := ls.metaOp1(lv, "__tostring").(*LFunction); ok {
 		ls.Push(fn)
 		ls.Push(lv)
 		ls.Call(1, 1)
-		return ls.reg.Pop()
+		result := ls.reg.Pop()
+		// Lua 5.3: __tostring must return a string
+		if _, ok := result.(LString); !ok {
+			ls.RaiseError("'__tostring' must return a string, not %s", result.Type().String())
+		}
+		return result
 	} else {
 		return LString(lv.String())
 	}

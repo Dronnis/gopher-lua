@@ -1666,7 +1666,12 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 	case *ast.UnaryMinusOpExpr:
 		expr.Expr = constFold(expr.Expr)
 		if value, ok := lnumberValue(expr.Expr); ok {
-			return &constLValueExpr{Value: value.Unm()}
+			result := value.Unm()
+			// Special case: -9223372036854775808.0 should be converted to integer
+			if result.Float64() == -9223372036854775808.0 {
+				result = LNumberInt(math.MinInt64)
+			}
+			return &constLValueExpr{Value: result}
 		}
 		return expr
 	case *ast.UnaryBitNotOpExpr:

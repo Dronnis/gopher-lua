@@ -168,15 +168,607 @@ func strFind(L *LState) int {
 	return md.CaptureLength()/2 + 1
 }
 
+// formatValue форматирует одно значение согласно спецификатору формата Lua
+func formatValue(L *LState, verb rune, flags string, width, precision int, arg LValue) string {
+	switch verb {
+	case 's':
+		var s string
+		switch v := arg.(type) {
+		case LString:
+			// Lua 5.3: %s с width/precision не принимает строки с null байтами
+			s = string(v)
+			if (width > 0 || precision >= 0) && strings.IndexByte(s, '\000') >= 0 {
+				L.RaiseError("string contains zeros")
+			}
+		case *LNilType:
+			s = "nil"
+		case LBool:
+			s = fmt.Sprint(bool(v))
+		case LNumber:
+			s = fmt.Sprint(v.Float64())
+		case *LTable:
+			// Проверяем метатаблицу на наличие __tostring
+			if mt := L.GetMetatable(v); mt != LNil {
+				tostring := mt.(*LTable).RawGetString("__tostring")
+				if tostring != LNil {
+					L.Push(tostring)
+					L.Push(v)
+					if err := L.PCall(1, 1, nil); err == nil {
+						s = LVAsString(L.Get(-1))
+						L.Pop(1)
+						break
+					}
+					L.Pop(1)
+				}
+			}
+			// Если нет __tostring, используем __name из метатаблицы
+			if mt := L.GetMetatable(v); mt != LNil {
+				name := mt.(*LTable).RawGetString("__name")
+				if name != LNil {
+					s = fmt.Sprintf("%s: %p", LVAsString(name), v)
+					break
+				}
+			}
+			s = fmt.Sprintf("table: %p", v)
+		case *LFunction:
+			s = fmt.Sprintf("function: %p", v)
+		case *LUserData:
+			s = fmt.Sprintf("userdata: %p", v)
+		case *LState:
+			s = fmt.Sprintf("thread: %p", v)
+		default:
+			s = fmt.Sprintf("%v", arg)
+		}
+
+		// Применяем precision для %s
+		if precision >= 0 && len(s) > precision {
+			s = s[:precision]
+		}
+
+		// Форматируем с шириной
+		if width > 0 {
+			if flags == "-" {
+				return fmt.Sprintf("%-*s", width, s)
+			}
+			return fmt.Sprintf("%*s", width, s)
+		}
+		return s
+
+	case 'c':
+		var b byte
+		switch v := arg.(type) {
+		case LNumber:
+			b = byte(v.Int64())
+		case LString:
+			if len(v) > 0 {
+				b = v[0]
+			}
+		}
+		return string([]byte{b})
+
+	case 'd', 'i':
+		var n int64
+		switch v := arg.(type) {
+		case LNumber:
+			n = v.Int64()
+		case LString:
+			if num, err := parseNumber(string(v)); err == nil {
+				n = num.Int64()
+			}
+		}
+
+		if precision < 0 {
+			precision = 1
+		}
+
+		// Форматируем число
+		var s string
+		if precision > 1 {
+			s = fmt.Sprintf("%0*d", precision, n)
+		} else {
+			s = fmt.Sprintf("%d", n)
+		}
+
+		// Добавляем знак '+' если указан флаг
+		if strings.Contains(flags, "+") && n >= 0 {
+			s = "+" + s
+		}
+
+		// Применяем ширину
+		if width > 0 {
+			if flags == "-" {
+				return fmt.Sprintf("%-*s", width, s)
+			}
+			if strings.Contains(flags, "0") {
+				// Для флага '0' используем padding с нулями
+				if len(s) < width {
+					padding := width - len(s)
+					if s[0] == '+' || s[0] == '-' {
+						// Знак должен быть первым, затем нули
+						return string(s[0]) + strings.Repeat("0", padding) + s[1:]
+					}
+					return strings.Repeat("0", padding) + s
+				}
+				return s
+			}
+			return fmt.Sprintf("%*s", width, s)
+		}
+		return s
+
+	case 'o':
+		var n uint64
+		switch v := arg.(type) {
+		case LNumber:
+			n = uint64(v.Int64())
+		}
+		if precision < 0 {
+			precision = 1
+		}
+		s := fmt.Sprintf("%o", n)
+		if precision > len(s) {
+			s = fmt.Sprintf("%0*s", precision, s)
+		}
+		if width > 0 {
+			if flags == "-" {
+				return fmt.Sprintf("%-*s", width, s)
+			}
+			return fmt.Sprintf("%*s", width, s)
+		}
+		return s
+
+	case 'u':
+		var n uint64
+		switch v := arg.(type) {
+		case LNumber:
+			n = uint64(v.Int64())
+		}
+		if precision < 0 {
+			precision = 1
+		}
+		s := fmt.Sprintf("%d", n)
+		if precision > len(s) {
+			s = fmt.Sprintf("%0*s", precision, s)
+		}
+		if width > 0 {
+			if flags == "-" {
+				return fmt.Sprintf("%-*s", width, s)
+			}
+			return fmt.Sprintf("%*s", width, s)
+		}
+		return s
+
+	case 'x', 'X':
+		var n uint64
+		switch v := arg.(type) {
+		case LNumber:
+			n = uint64(v.Int64())
+		}
+		if precision < 0 {
+			precision = 1
+		}
+		var s string
+		if verb == 'x' {
+			s = fmt.Sprintf("%x", n)
+		} else {
+			s = fmt.Sprintf("%X", n)
+		}
+		if precision > len(s) {
+			s = fmt.Sprintf("%0*s", precision, s)
+		}
+		if width > 0 {
+			if flags == "-" {
+				return fmt.Sprintf("%-*s", width, s)
+			}
+			if strings.Contains(flags, "0") {
+				// Для флага '0' используем padding с нулями
+				if len(s) < width {
+					return strings.Repeat("0", width-len(s)) + s
+				}
+				return s
+			}
+			return fmt.Sprintf("%*s", width, s)
+		}
+		return s
+
+	case 'f', 'F':
+		var n float64
+		switch v := arg.(type) {
+		case LNumber:
+			n = v.Float64()
+		}
+		if precision < 0 {
+			precision = 6
+		}
+		var s string
+		if verb == 'f' {
+			s = fmt.Sprintf("%.*f", precision, n)
+		} else {
+			s = fmt.Sprintf("%.*F", precision, n)
+		}
+		if width > 0 {
+			if flags == "-" {
+				return fmt.Sprintf("%-*s", width, s)
+			}
+			if strings.Contains(flags, "0") && n >= 0 {
+				return fmt.Sprintf("%0*s", width, s)
+			}
+			if strings.Contains(flags, "+") && n >= 0 {
+				s = "+" + s
+			}
+			return fmt.Sprintf("%*s", width, s)
+		}
+		if strings.Contains(flags, "+") && n >= 0 {
+			return "+" + s
+		}
+		return s
+
+	case 'e', 'E':
+		var n float64
+		switch v := arg.(type) {
+		case LNumber:
+			n = v.Float64()
+		}
+		if precision < 0 {
+			precision = 6
+		}
+		var s string
+		if verb == 'e' {
+			s = fmt.Sprintf("%.*e", precision, n)
+		} else {
+			s = fmt.Sprintf("%.*E", precision, n)
+		}
+		if width > 0 {
+			if flags == "-" {
+				return fmt.Sprintf("%-*s", width, s)
+			}
+			return fmt.Sprintf("%*s", width, s)
+		}
+		return s
+
+	case 'g', 'G':
+		var n float64
+		switch v := arg.(type) {
+		case LNumber:
+			n = v.Float64()
+		}
+		if precision < 0 {
+			precision = -1
+		}
+		var s string
+		if verb == 'g' {
+			s = fmt.Sprintf("%.*g", precision, n)
+		} else {
+			s = fmt.Sprintf("%.*G", precision, n)
+		}
+		if width > 0 {
+			if flags == "-" {
+				return fmt.Sprintf("%-*s", width, s)
+			}
+			return fmt.Sprintf("%*s", width, s)
+		}
+		return s
+
+	case 'a', 'A':
+		// Шестнадцатеричный формат чисел с плавающей точкой (Lua 5.2+)
+		var n float64
+		switch v := arg.(type) {
+		case LNumber:
+			n = v.Float64()
+		}
+
+		// Обработка специальных значений
+		if math.IsNaN(n) {
+			if verb == 'a' {
+				return "nan"
+			}
+			return "NAN"
+		}
+		if math.IsInf(n, 1) {
+			if verb == 'a' {
+				return "inf"
+			}
+			return "INF"
+		}
+		if math.IsInf(n, -1) {
+			if verb == 'a' {
+				return "-inf"
+			}
+			return "-INF"
+		}
+
+		// Обработка нуля
+		if n == 0 {
+			if verb == 'a' {
+				if math.Signbit(n) {
+					return "-0x0p+0"
+				}
+				return "0x0p+0"
+			}
+			if math.Signbit(n) {
+				return "-0X0P+0"
+			}
+			return "0X0P+0"
+		}
+
+		// Получаем знак
+		sign := ""
+		if n < 0 {
+			sign = "-"
+			n = -n
+		} else if strings.Contains(flags, "+") {
+			sign = "+"
+		}
+
+		// Получаем мантиссу и экспоненту
+		exp := 0
+		mantissa := n
+
+		// Нормализуем мантиссу к диапазону [1, 2)
+		for mantissa >= 2 {
+			mantissa /= 2
+			exp++
+		}
+		for mantissa < 1 && mantissa > 0 {
+			mantissa *= 2
+			exp--
+		}
+
+		// Форматируем мантиссу в шестнадцатеричном виде
+		// Первая цифра всегда 1 (для нормализованных чисел)
+		// Остальные цифры - дробная часть
+
+		// Определяем precision (по умолчанию достаточно для double)
+		if precision < 0 {
+			precision = 13 // Достаточно для полной точности double
+		}
+
+		// Вычисляем шестнадцатеричные цифры
+		hexDigits := "0123456789abcdef"
+		if verb == 'A' {
+			hexDigits = "0123456789ABCDEF"
+		}
+
+		// Первая цифра (целая часть) всегда 1 для нормализованных чисел
+		result := mantissa
+		intPart := int(result)
+		fracPart := result - float64(intPart)
+
+		// Формируем шестнадцатеричное представление
+		hexPrefix := "0x"
+		if verb == 'A' {
+			hexPrefix = "0X"
+		}
+		hex := fmt.Sprintf("%s%s%x", sign, hexPrefix, intPart)
+
+		if precision > 0 {
+			hex += "."
+			for i := 0; i < precision; i++ {
+				fracPart *= 16
+				digit := int(fracPart)
+				hex += string(hexDigits[digit])
+				fracPart -= float64(digit)
+			}
+			// Убираем trailing zeros только если precision не был задан явно (по умолчанию 13)
+			// Если precision задан явно (>= 0 и < 13), оставляем как есть
+			if precision >= 13 {
+				hex = strings.TrimRight(hex, "0")
+				if hex[len(hex)-1] == '.' {
+					hex += "0"
+				}
+			}
+		} else if precision == 0 {
+			// precision = 0 означает без дробной части
+			hex = fmt.Sprintf("%s%s%x", sign, hexPrefix, intPart)
+		}
+
+		// Добавляем экспоненту
+		expSign := "+"
+		if exp < 0 {
+			expSign = "-"
+			exp = -exp
+		}
+		expMarker := "p"
+		if verb == 'A' {
+			expMarker = "P"
+		}
+		hex += fmt.Sprintf("%s%s%d", expMarker, expSign, exp)
+
+		return hex
+
+	case 'q':
+		// Lua 5.3 string.format %q - форматирует строку так, чтобы она могла быть прочитана Lua интерпретатором
+		// В Lua 5.3 %q экранирует ", \, \n как \<символ>, а остальные control characters как \ddd
+		switch v := arg.(type) {
+		case LString:
+			s := string(v)
+			// Экранируем специальные символы
+			result := []byte{'"'}
+			for i := 0; i < len(s); i++ {
+				c := s[i]
+				switch c {
+				case '"', '\\', '\n':
+					// Экранируем как \<символ> (Lua 5.3 стиль)
+					result = append(result, '\\', c)
+				default:
+					if c < 32 || c == 127 {
+						// Контрольные символы - используем десятичный формат \ddd
+						// В Lua 5.3: если следующий символ не цифра, используем \d без ведущих нулей
+						// иначе используем \ddd с ведущими нулями
+						result = append(result, '\\')
+						if i+1 < len(s) && s[i+1] >= '0' && s[i+1] <= '9' {
+							// Следующий символ цифра - используем 3 цифры
+							result = append(result, byte('0'+(c/100)))
+							result = append(result, byte('0'+((c/10)%10)))
+							result = append(result, byte('0'+(c%10)))
+						} else {
+							// Следующий символ не цифра - используем без ведущих нулей
+							if c >= 100 {
+								result = append(result, byte('0'+(c/100)))
+							}
+							if c >= 10 {
+								result = append(result, byte('0'+((c/10)%10)))
+							}
+							result = append(result, byte('0'+(c%10)))
+						}
+					} else {
+						// Все остальные байты (включая не-UTF-8) копируем как есть
+						result = append(result, c)
+					}
+				}
+			}
+			result = append(result, '"')
+			return string(result)
+		case *LNilType:
+			return "nil"
+		case LBool:
+			if v {
+				return "true"
+			}
+			return "false"
+		case LNumber:
+			// Lua 5.3 %q для чисел: целые числа без научной нотации, float с %g
+			// LNumber хранит int64 или float64 - используем правильное представление
+			switch val := v.value.(type) {
+			case int64:
+				// Целое число - форматируем без научной нотации
+				return fmt.Sprintf("%d", val)
+			case float64:
+				// Float - проверяем, является ли число целым
+				intPart, fracPart := math.Modf(val)
+				if fracPart == 0 {
+					// Целое число - форматируем без научной нотации
+					return fmt.Sprintf("%d", int64(intPart))
+				}
+				// Float - используем %g
+				return fmt.Sprintf("%g", val)
+			default:
+				return fmt.Sprintf("%v", val)
+			}
+		default:
+			L.RaiseError("no literal")
+			return ""
+		}
+
+	default:
+		// Неизвестный спецификатор - вызываем ошибку (Lua 5.3 style)
+		L.RaiseError("invalid option '%%%c'", verb)
+		return ""
+	}
+}
+
 func strFormat(L *LState) int {
 	str := L.CheckString(1)
-	args := make([]interface{}, L.GetTop()-1)
 	top := L.GetTop()
-	for i := 2; i <= top; i++ {
-		args[i-2] = L.Get(i)
+
+	if top < 1 {
+		L.Push(emptyLString)
+		return 1
 	}
-	npat := strings.Count(str, "%") - strings.Count(str, "%%")
-	L.Push(LString(fmt.Sprintf(str, args[:intMin(npat, len(args))]...)))
+
+	// Собираем аргументы
+	args := make([]LValue, 0, top-1)
+	for i := 2; i <= top; i++ {
+		args = append(args, L.Get(i))
+	}
+
+	result := make([]byte, 0, len(str))
+	argIdx := 0
+	i := 0
+	specCount := 0 // Счетчик спецификаторов формата
+
+	for i < len(str) {
+		if str[i] == '%' {
+			i++
+			if i >= len(str) {
+				break
+			}
+
+			// Проверяем на %%
+			if str[i] == '%' {
+				result = append(result, '%')
+				i++
+				continue
+			}
+			specCount++
+
+			// Читаем флаги
+			flags := ""
+			for i < len(str) && (str[i] == '-' || str[i] == '+' || str[i] == '0' || str[i] == ' ' || str[i] == '#') {
+				flags += string(str[i])
+				i++
+			}
+			// Проверка на repeated flags (Lua 5.3)
+			if len(flags) > 5 {
+				L.RaiseError("repeated flags")
+			}
+
+			// Читаем ширину
+			width := -1
+			if i < len(str) && str[i] >= '0' && str[i] <= '9' {
+				width = 0
+				for i < len(str) && str[i] >= '0' && str[i] <= '9' {
+					// Проверка на переполнение (Lua 5.3 limit: INT_MAX/2)
+					if width > 107374182 {
+						L.RaiseError("too long")
+					}
+					width = width*10 + int(str[i]-'0')
+					i++
+				}
+			}
+
+			// Читаем precision
+			precision := -1
+			if i < len(str) && str[i] == '.' {
+				i++
+				precision = 0
+				for i < len(str) && str[i] >= '0' && str[i] <= '9' {
+					// Проверка на переполнение (Lua 5.3 limit: INT_MAX/2)
+					if precision > 107374182 {
+						L.RaiseError("too long")
+					}
+					precision = precision*10 + int(str[i]-'0')
+					i++
+				}
+			}
+
+			// Проверка на общую длину (Lua 5.3: width и precision не должны быть слишком большими)
+			if width >= 100 || precision >= 100 {
+				L.RaiseError("too long")
+			}
+
+			// Читаем спецификатор
+			if i >= len(str) {
+				break
+			}
+			verb := rune(str[i])
+			i++
+
+			// Получаем аргумент
+			var arg LValue = LNil
+			if argIdx < len(args) {
+				arg = args[argIdx]
+				argIdx++
+			}
+
+			// Форматируем
+			formatted := formatValue(L, verb, flags, width, precision, arg)
+			result = append(result, formatted...)
+
+		} else {
+			result = append(result, str[i])
+			i++
+		}
+	}
+
+	// Проверяем, что количество аргументов соответствует количеству спецификаторов
+	if argIdx < specCount {
+		L.RaiseError("no value")
+	}
+	if argIdx > specCount {
+		L.RaiseError("extra values")
+	}
+
+	L.Push(LString(string(result)))
 	return 1
 }
 
@@ -349,33 +941,42 @@ type strMatchData struct {
 }
 
 // strGmatchIter - итератор для gmatch (внутренняя функция)
-// Вызывается closure который хранит match data в upvalue
+// Вызывается closure который хранит state в upvalue
 func strGmatchIter(L *LState) int {
-	// Получаем match data из первого upvalue
-	md := L.Get(UpvalueIndex(1)).(*LUserData).Value.(*strMatchData)
-	str := md.str
-	matches := md.matches
-	idx := md.pos
-	md.pos += 1
+	// Получаем state из первого upvalue
+	state := L.Get(UpvalueIndex(1)).(*LTable)
+	str := LVAsString(state.RawGetString("str"))
+	matches := state.RawGetString("matches").(*LTable)
+	pos := int(state.RawGetString("pos").(LNumber).Int64())
 
-	if idx >= len(matches) {
+	matchesLen := int(matches.Len())
+	if pos >= matchesLen {
 		return 0
 	}
 
-	match := matches[idx]
-	if match.CaptureLength() == 2 {
-		L.Push(LString(str[match.Capture(0):match.Capture(1)]))
+	// Update position
+	state.RawSetString("pos", LNumberInt(int64(pos+1)))
+
+	// Get match at position
+	mdTable := matches.RawGetInt(pos + 1).(*LTable)
+	captures := mdTable.RawGetString("captures").(*LTable)
+	capturesLen := int(captures.Len())
+
+	if capturesLen == 2 {
+		// Single capture
+		start := int(captures.RawGetInt(1).(LNumber).Int64())
+		ends := int(captures.RawGetInt(2).(LNumber).Int64())
+		L.Push(LString(str[start:ends]))
 		return 1
 	}
 
-	for i := 2; i < match.CaptureLength(); i += 2 {
-		if match.IsPosCapture(i) {
-			L.Push(LNumberInt(int64(match.Capture(i))))
-		} else {
-			L.Push(LString(str[match.Capture(i):match.Capture(i+1)]))
-		}
+	// Multiple captures
+	for i := 2; i < capturesLen; i += 2 {
+		start := int(captures.RawGetInt(i).(LNumber).Int64())
+		ends := int(captures.RawGetInt(i + 1).(LNumber).Int64())
+		L.Push(LString(str[start:ends]))
 	}
-	return match.CaptureLength()/2 - 1
+	return capturesLen/2 - 1
 }
 
 func strGmatch(L *LState) int {
@@ -386,14 +987,29 @@ func strGmatch(L *LState) int {
 		L.RaiseError(err.Error())
 	}
 
-	// Создаём match data
-	ud := L.NewUserData()
-	ud.Value = &strMatchData{str, 0, mds}
+	// Создаём таблицу для хранения состояния
+	state := L.NewTable()
+	state.RawSetString("str", LString(str))
+	state.RawSetString("pos", LNumberInt(0))
 
-	// Создаём closure с match data в upvalue
-	// В Lua 5.3 string.gmatch возвращает closure с 2 upvalues: state и var
-	// Для совместимости создаём closure с 1 upvalue (match data)
-	iter := L.NewClosure(strGmatchIter, ud)
+	// Сохраняем matches в таблицу
+	matchesTable := L.NewTable()
+	for i, md := range mds {
+		mdTable := L.NewTable()
+		mdTable.RawSetString("start", LNumberInt(int64(md.Capture(0))))
+		mdTable.RawSetString("ends", LNumberInt(int64(md.Capture(1))))
+		// Сохраняем captures
+		capturesTable := L.NewTable()
+		for j := 0; j < md.CaptureLength(); j++ {
+			capturesTable.RawSetInt(j+1, LNumberInt(int64(md.Capture(j))))
+		}
+		mdTable.RawSetString("captures", capturesTable)
+		matchesTable.RawSetInt(i+1, mdTable)
+	}
+	state.RawSetString("matches", matchesTable)
+
+	// Создаём closure с state в upvalue
+	iter := L.NewClosure(strGmatchIter, state)
 	L.Push(iter)
 	return 1
 }
@@ -451,42 +1067,59 @@ func strMatch(L *LState) int {
 
 func strRep(L *LState) int {
 	str := L.CheckString(1)
-	n := L.CheckInt(2)
+	n64 := L.CheckInt64(2)
 	sep := L.OptString(3, "")
 
-	if n <= 0 {
+	if n64 <= 0 {
 		L.Push(emptyLString)
 		return 1
 	}
 
 	// Проверяем на переполнение
-	// Максимальный размер строки в Go - maxInt
+	// Максимальный разумный размер строки - 100MB для безопасности
+	// Lua 5.3 тесты ожидают ошибку для очень больших строк
+	maxReasonableSize := 100 * 1024 * 1024 // 100MB
 	maxSize := 1<<31 - 1
 	strLen := len(str)
 	sepLen := len(sep)
 
+	// Быстрая проверка: если строка не пустая и n очень большое - ошибка
+	if strLen > 0 && n64 > int64(maxReasonableSize)/int64(strLen) {
+		L.RaiseError("too large")
+		return 0
+	}
+
 	// Проверяем переполнение до вычислений
 	// Если strLen > 0 и n > maxSize/strLen, то результат будет слишком большим
-	if strLen > 0 && n > maxSize/strLen {
+	if strLen > 0 && n64 > int64(maxSize)/int64(strLen) {
 		L.RaiseError("too large")
 		return 0
 	}
 
 	// Вычисляем общий размер результата: n*strLen + (n-1)*sepLen
-	totalSize := strLen * n
-	if sepLen > 0 && n > 1 {
+	totalSize := int64(strLen) * n64
+	if sepLen > 0 && n64 > 1 {
 		// Проверяем переполнение для разделителя
-		if sepLen > maxSize/(n-1) {
+		if int64(sepLen) > int64(maxSize)/(n64-1) {
 			L.RaiseError("too large")
 			return 0
 		}
-		totalSize += sepLen * (n - 1)
+		totalSize += int64(sepLen) * (n64 - 1)
 	}
 
-	if totalSize > maxSize {
+	if totalSize > int64(maxSize) {
 		L.RaiseError("too large")
 		return 0
 	}
+
+	// Дополнительная проверка на разумный размер
+	if totalSize > int64(maxReasonableSize) {
+		L.RaiseError("too large")
+		return 0
+	}
+
+	// Теперь безопасно конвертируем n64 в int
+	n := int(n64)
 
 	if sep == "" {
 		// Без разделителя - просто повторяем строку

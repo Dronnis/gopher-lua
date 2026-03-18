@@ -405,7 +405,7 @@ func parsePattern(sc *scanner, toplevel bool, inCapture bool) *seqPattern {
 			switch sc.Peek() {
 			case '0':
 				sc.Next()
-				panic(newError(sc.CurrentPos(), "invalid capture index %0"))
+				panic(newError(sc.CurrentPos(), "invalid capture index"))
 			case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 				if inCapture {
 					digit := sc.Next()

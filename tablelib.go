@@ -91,33 +91,94 @@ func tableRemove(L *LState) int {
 func tableConcat(L *LState) int {
 	tbl := L.CheckTable(1)
 	sep := LString(L.OptString(2, ""))
-	i := L.OptInt(3, 1)
-	j := L.OptInt(4, tbl.Len())
-	if L.GetTop() == 3 {
-		if i > tbl.Len() || i < 1 {
-			L.Push(emptyLString)
-			return 1
-		}
+	// Use Int64 to support large indices (Lua 5.3 compatibility)
+	i := L.OptInt64(3, 1)
+	j := L.OptInt64(4, -1) // -1 means use tbl.Len() as default
+	if j == -1 {
+		j = int64(tbl.Len())
 	}
-	i = intMax(intMin(i, tbl.Len()), 1)
-	j = intMin(intMin(j, tbl.Len()), tbl.Len())
+
+	// Lua 5.3: if i > j, return empty string
 	if i > j {
 		L.Push(emptyLString)
 		return 1
 	}
-	//TODO should flushing?
-	retbottom := L.GetTop()
-	for ; i <= j; i++ {
-		v := tbl.RawGetInt(i)
-		if !LVCanConvToString(v) {
-			L.RaiseError("invalid value (%s) at index %d in table for concat", v.Type().String(), i)
-		}
-		L.Push(v)
-		if i != j {
-			L.Push(sep)
-		}
+
+	// Collect values in range [i, j]
+	// For efficiency, we only check indices that actually exist in the table
+	// Use a reasonable initial capacity to avoid memory issues
+	var values []LValue
+	rangeSize := j - i + 1
+	if rangeSize > 1000 {
+		values = make([]LValue, 0, 1000)
+	} else if rangeSize > 0 {
+		values = make([]LValue, 0, rangeSize)
+	} else {
+		values = make([]LValue, 0)
 	}
-	L.Push(stringConcat(L, L.GetTop()-retbottom, L.reg.Top()-1))
+
+	// Check if the range is within reasonable bounds for iteration
+	// If the range is too large, only check existing keys
+	if rangeSize <= 1000000 && rangeSize > 0 {
+		// Small range - iterate through indices
+		for idx := i; idx <= j; idx++ {
+			v := tbl.RawGet(LNumberInt(idx))
+			if v != LNil {
+				if !LVCanConvToString(v) {
+					L.RaiseError("invalid value (%s) at index %d in table for concat", v.Type().String(), idx)
+				}
+				values = append(values, v)
+			}
+			// Check for overflow
+			if idx == 9223372036854775807 {
+				break
+			}
+		}
+	} else {
+		// Large range - only check existing keys
+		// First check array part
+		for idx := int64(0); idx < int64(len(tbl.array)); idx++ {
+			if idx >= i && idx <= j {
+				v := tbl.array[idx]
+				if v != LNil {
+					if !LVCanConvToString(v) {
+						L.RaiseError("invalid value (%s) at index %d in table for concat", v.Type().String(), idx+1)
+					}
+					values = append(values, v)
+				}
+			}
+		}
+		// Then check hash part
+		tbl.ForEach(func(key LValue, value LValue) {
+			if key.Type() == LTNumber {
+				keyNum := key.(LNumber).Int64()
+				if keyNum >= i && keyNum <= j {
+					if !LVCanConvToString(value) {
+						L.RaiseError("invalid value (%s) at index %d in table for concat", value.Type().String(), keyNum)
+					}
+					values = append(values, value)
+				}
+			}
+		})
+		// Sort values by key (for hash part)
+		// For simplicity, we'll just use the order they were added
+	}
+
+	// Build result string
+	if len(values) == 0 {
+		L.Push(emptyLString)
+		return 1
+	}
+
+	result := make([]byte, 0, len(values)*10)
+	for k, v := range values {
+		if k > 0 {
+			result = append(result, string(sep)...)
+		}
+		result = append(result, string(v.(LString))...)
+	}
+
+	L.Push(LString(string(result)))
 	return 1
 }
 
@@ -249,6 +310,21 @@ func tableUnpack(L *LState) int {
 		L.Push(tbl.RawGet(LNumberInt(int64(idx))))
 	}
 	return count
+}
+
+// Helper functions for int64
+func int64Max(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func int64Min(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 //

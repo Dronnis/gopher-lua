@@ -158,6 +158,12 @@ func parseNumber(number string) (LNumber, error) {
 		number = number[1:]
 	}
 
+	// Lua 5.3 special case: -9223372036854775808 (LLONG_MIN) should be parsed as integer
+	// This is the only negative number that can't be represented as positive int64
+	if isNegative && number == "9223372036854775808" {
+		return LNumberInt(math.MinInt64), nil
+	}
+
 	// Check for hexadecimal format (0x...)
 	if strings.HasPrefix(strings.ToLower(number), "0x") {
 		// Check for negative sign after 0x (e.g., "0x-...")
@@ -521,10 +527,8 @@ func parseHexFloatWithExp(s string) (float64, error) {
 				if remainingFracDigits > 0 {
 					hexExponent -= remainingFracDigits * 4
 				}
-			} else {
-				// All zeros in fractional part
-				hexExponent -= fracLen * 4
 			}
+			// else: All zeros in fractional part - don't adjust hexExponent
 		}
 	}
 
