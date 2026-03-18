@@ -90,14 +90,14 @@ assert(string.byte("hi", 2, 1) == nil)
 assert(string.char() == "")
 assert(string.char(0, 255, 0) == "\0\255\0")
 assert(string.char(0, string.byte("\xe4"), 0) == "\0\xe4\0")
-assert(string.char(string.byte("\xe4l\0ï¿½u", 1, -1)) == "\xe4l\0ï¿½u")
-assert(string.char(string.byte("\xe4l\0ï¿½u", 1, 0)) == "")
-assert(string.char(string.byte("\xe4l\0ï¿½u", -10, 100)) == "\xe4l\0ï¿½u")
+assert(string.char(string.byte("\xe4l\0óu", 1, -1)) == "\xe4l\0óu")
+assert(string.char(string.byte("\xe4l\0óu", 1, 0)) == "")
+assert(string.char(string.byte("\xe4l\0óu", -10, 100)) == "\xe4l\0óu")
 
 assert(string.upper("ab\0c") == "AB\0C")
 assert(string.lower("\0ABCc%$") == "\0abcc%$")
 assert(string.rep('teste', 0) == '')
-assert(string.rep('tï¿½s\00tï¿½', 2) == 'tï¿½s\0tï¿½tï¿½s\000tï¿½')
+assert(string.rep('tés\00tê', 2) == 'tés\0têtés\000tê')
 assert(string.rep('', 10) == '')
 
 if string.packsize("i") == 4 then
@@ -149,8 +149,8 @@ else   -- compatible coercion
 end
 
 
-x = '"ï¿½lo"\n\\'
-assert(string.format('%q%s', x, x) == '"\\"ï¿½lo\\"\\\n\\\\""ï¿½lo"\n\\')
+x = '"ílo"\n\\'
+assert(string.format('%q%s', x, x) == '"\\"ílo\\"\\\n\\\\""ílo"\n\\')
 assert(string.format('%q', "\0") == [["\0"]])
 assert(load(string.format('return %q', x))() == x)
 x = "\0\1\0023\5\0009"
@@ -349,14 +349,14 @@ if not _port then
   end
 
   if trylocale("collate")  then
-    assert("alo" < "ï¿½lo" and "ï¿½lo" < "amo")
+    assert("alo" < "álo" and "álo" < "amo")
   end
 
   if trylocale("ctype") then
-    assert(string.gsub("ï¿½ï¿½ï¿½ï¿½ï¿½", "%a", "x") == "xxxxx")
-    assert(string.gsub("ï¿½ï¿½ï¿½ï¿½", "%l", "x") == "xï¿½xï¿½")
-    assert(string.gsub("ï¿½ï¿½ï¿½ï¿½", "%u", "x") == "ï¿½xï¿½x")
-    assert(string.upper"ï¿½ï¿½ï¿½{xuxu}ï¿½ï¿½o" == "ï¿½ï¿½ï¿½{XUXU}ï¿½ï¿½O")
+    assert(string.gsub("áéíóú", "%a", "x") == "xxxxx")
+    assert(string.gsub("áÁéÉ", "%l", "x") == "xÁxÉ")
+    assert(string.gsub("áÁéÉ", "%u", "x") == "áxéx")
+    assert(string.upper"áÁé{xuxu}ção" == "ÁÁÉ{XUXU}ÇÃO")
   end
 
   os.setlocale("C")
