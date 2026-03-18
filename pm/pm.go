@@ -405,11 +405,11 @@ func parsePattern(sc *scanner, toplevel bool, inCapture bool) *seqPattern {
 			switch sc.Peek() {
 			case '0':
 				sc.Next()
-				panic(newError(sc.CurrentPos(), "invalid capture index"))
+				panic(newError(_UNKNOWN, "invalid capture index %%%d", 0))
 			case '1', '2', '3', '4', '5', '6', '7', '8', '9':
 				if inCapture {
 					digit := sc.Next()
-					panic(newError(sc.CurrentPos(), "invalid capture index %%%c", digit))
+					panic(newError(_UNKNOWN, "invalid capture index %%%c", digit))
 				}
 				pat.Patterns = append(pat.Patterns, &numberPattern{sc.Next() - 48})
 			case 'b':
@@ -620,7 +620,7 @@ redo:
 	case opNumber:
 		idx := inst.Operand1 * 2
 		if idx >= m.CaptureLength()-1 {
-			panic(newError(_UNKNOWN, "invalid capture index"))
+			panic(newError(_UNKNOWN, "invalid capture index %%%d", inst.Operand1))
 		}
 		capture := src[m.Capture(idx):m.Capture(idx+1)]
 		for i := 0; i < len(capture); i++ {
