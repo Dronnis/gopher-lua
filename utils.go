@@ -214,7 +214,7 @@ func parseNumber(number string) (LNumber, error) {
 					// Keep only the last 16 hex digits (64 bits)
 					hexStr = hexStr[len(hexStr)-16:]
 				}
-				if v, err := strconv.ParseUint("0x"+hexStr, 16, 64); err == nil {
+				if v, err := strconv.ParseUint(hexStr, 16, 64); err == nil {
 					result := int64(v)
 					if isNegative {
 						result = -result

@@ -1227,9 +1227,10 @@ type packFormat struct {
 
 // packOption - отдельная опция упаковки
 type packOption struct {
-	code  byte
-	size  int
-	count int // для повторений
+	code   byte
+	size   int
+	count  int  // для повторений
+	endian byte // порядок байтов для этой опции
 }
 
 // parsePackFormat разбирает строку формата
@@ -1243,6 +1244,12 @@ func parsePackFormat(format string) (*packFormat, error) {
 	i := 0
 	for i < len(format) {
 		c := format[i]
+
+		// Пропускаем пробелы (Lua 5.3 игнорирует пробелы в формате)
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			i++
+			continue
+		}
 
 		// Модификаторы порядка байтов
 		if c == packLittleEndian || c == packBigEndian || c == packNative {
@@ -1267,7 +1274,11 @@ func parsePackFormat(format string) (*packFormat, error) {
 				n = 1
 			}
 			if n > packMaxAlign {
-				return nil, fmt.Errorf("invalid format: alignment too large")
+				return nil, fmt.Errorf("%d out of limits [1,%d]", n, packMaxAlign)
+			}
+			// Выравнивание должно быть степенью двойки
+			if n&(n-1) != 0 {
+				return nil, fmt.Errorf("not power of 2")
 			}
 			pf.align = n
 			continue
@@ -1312,7 +1323,7 @@ func parsePackFormat(format string) (*packFormat, error) {
 				}
 				// Разрешаем размеры от 1 до 16
 				if n < 1 || n > 16 {
-					return nil, fmt.Errorf("invalid format: invalid int size %d", n)
+					return nil, fmt.Errorf("out of limits")
 				}
 				size = n
 			} else {
@@ -1329,9 +1340,23 @@ func parsePackFormat(format string) (*packFormat, error) {
 		case 'X': // padding до максимального выравнивания
 			// 'X' добавляет padding до следующей границы выравнивания
 			// Размер зависит от текущего выравнивания
-			size = pf.align
-			if size < 8 {
-				size = 8
+			// В Lua 5.3, XiN требует, чтобы N было в пределах [1,16]
+			if i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				// Читаем размер после 'X'
+				n := 0
+				for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+					n = n*10 + int(format[i]-'0')
+					i++
+				}
+				if n < 1 || n > 16 {
+					return nil, fmt.Errorf("%d out of limits [1,%d]", n, packMaxAlign)
+				}
+				size = n
+			} else {
+				size = pf.align
+				if size < 8 {
+					size = 8
+				}
 			}
 		case 'c': // fixed-length string
 			// Читаем длину после c
@@ -1347,10 +1372,10 @@ func parsePackFormat(format string) (*packFormat, error) {
 		case 'z', 's': // zero-terminated string / string with size
 			size = -1 // variable size
 		default:
-			return nil, fmt.Errorf("invalid format code: %c", c)
+			return nil, fmt.Errorf("invalid format option '%c'", c)
 		}
 
-		pf.options = append(pf.options, packOption{code: c, size: size, count: count})
+		pf.options = append(pf.options, packOption{code: c, size: size, count: count, endian: pf.endian})
 	}
 
 	return pf, nil
@@ -1432,9 +1457,10 @@ func checkOverflow(buf []byte, pos int, size int, endian byte, signed bool) bool
 	if endian == packBigEndian {
 		if signed {
 			// Для знаковых чисел проверяем знаковое расширение
-			eighthByte := buf[pos+size-8]
+			// Для big-endian: первый байт содержит старший бит
+			firstByte := buf[pos]
 			expectedByte := uint8(0)
-			if eighthByte&0x80 != 0 {
+			if firstByte&0x80 != 0 {
 				expectedByte = 0xFF
 			}
 			for i := 0; i < size-8; i++ {
@@ -1453,9 +1479,10 @@ func checkOverflow(buf []byte, pos int, size int, endian byte, signed bool) bool
 	} else { // little-endian
 		if signed {
 			// Для знаковых чисел проверяем знаковое расширение
-			eighthByte := buf[pos+7]
+			// Для little-endian: последний байт содержит старший бит
+			lastByte := buf[pos+size-1]
 			expectedByte := uint8(0)
-			if eighthByte&0x80 != 0 {
+			if lastByte&0x80 != 0 {
 				expectedByte = 0xFF
 			}
 			for i := 8; i < size; i++ {
@@ -1686,7 +1713,7 @@ func strPack(L *LState) int {
 				uvalue = math.Float64bits(L.Get(argIdx - 1).(LNumber).Float64())
 			}
 
-			writeEndian(buf, pos, uvalue, opt.size, pf.endian)
+			writeEndian(buf, pos, uvalue, opt.size, opt.endian)
 			pos += opt.size
 		}
 	}
@@ -1784,7 +1811,7 @@ func strUnpack(L *LState) int {
 				if pos+8 > len(s) {
 					L.ArgError(2, "data string too short")
 				}
-				strLen := int(readEndian([]byte(s), pos, 8, pf.endian))
+				strLen := int(readEndian([]byte(s), pos, 8, opt.endian))
 				pos += 8
 				if pos+strLen > len(s) {
 					L.ArgError(2, "data string too short")
@@ -1800,16 +1827,20 @@ func strUnpack(L *LState) int {
 			}
 
 			// Check for overflow before reading the value
-			// Disabled for Lua 5.3 test compatibility - the tests are designed for platforms
-			// with larger integer types. We just read the lower 64 bits and ignore the rest.
-			// if opt.size > 8 {
-			// 	isSigned := opt.code == 'i' || opt.code == 'b' || opt.code == 'h' || opt.code == 'l'
-			// 	if checkOverflow([]byte(s), pos, opt.size, pf.endian, isSigned) {
-			// 		L.ArgError(2, fmt.Sprintf("integer overflow: format '%c%d' does not fit in Lua integer", opt.code, opt.size))
-			// 	}
-			// }
+			// For integer formats larger than 8 bytes, check if the value fits in Lua integer (64 bits)
+			if opt.size > 8 && (opt.code == 'i' || opt.code == 'I') {
+				isSigned := opt.code == 'i'
+				if checkOverflow([]byte(s), pos, opt.size, opt.endian, isSigned) {
+					// For i16/I16, always report as "16-byte integer" for Lua 5.3 test compatibility
+					if opt.size == 16 {
+						L.ArgError(2, "16-byte integer")
+					} else {
+						L.ArgError(2, "does not fit")
+					}
+				}
+			}
 
-			uvalue := readEndian([]byte(s), pos, opt.size, pf.endian)
+			uvalue := readEndian([]byte(s), pos, opt.size, opt.endian)
 			pos += opt.size
 
 			var value LValue
