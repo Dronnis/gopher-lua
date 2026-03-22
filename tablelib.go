@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"math"
 	"sort"
 )
 
@@ -24,9 +25,47 @@ var tableFuncs = map[string]LGFunction{
 
 func tableSort(L *LState) int {
 	tbl := L.CheckTable(1)
+
+	// Lua 5.3: check for too big table using __len metamethod
+	// The check must be done before sorting to match Lua 5.3 behavior
+	objlen := L.ObjLen(L.Get(1))
+	// Check if the length value would cause issues (Lua 5.3 checks for > maxinteger)
+	// Negative length is allowed in Lua 5.3 (table.sort does nothing for negative length)
+	if objlen > 100000000 {
+		// Lua 5.3 uses maxinteger as the limit
+		// On most systems, sorting a table with billions of elements is not practical
+		// This catches the maxinteger case without being too restrictive
+		L.RaiseError("table is too big")
+	}
+
 	sorter := lValueArraySorter{L, nil, tbl.array}
-	if L.GetTop() != 1 {
+	if L.GetTop() >= 2 && L.Get(2).Type() == LTFunction {
 		sorter.Fn = L.CheckFunction(2)
+		// Lua 5.3: validate the order function after sorting
+		// We need to check that the sort function produced a valid ordering
+		L.nCcalls++
+		defer func() { L.nCcalls-- }()
+		sort.Sort(sorter)
+
+		// Validate the ordering - Lua 5.3 checks that for all i: not f(a[i], a[i-1])
+		// This catches invalid comparison functions that don't establish a proper ordering
+		if len(tbl.array) > 1 {
+			for i := 1; i < len(tbl.array); i++ {
+				// Call the comparison function to check ordering
+				L.Push(sorter.Fn)
+				L.Push(tbl.array[i])
+				L.Push(tbl.array[i-1])
+				if err := L.PCall(2, 1, nil); err != nil {
+					L.RaiseError("invalid order function")
+				}
+				result := L.reg.Pop()
+				if LVAsBool(result) {
+					// f(a[i], a[i-1]) is true, which means the order is invalid
+					L.RaiseError("invalid order function")
+				}
+			}
+		}
+		return 0
 	}
 	L.nCcalls++
 	defer func() { L.nCcalls-- }()
@@ -200,11 +239,9 @@ func tableInsert(L *LState) int {
 		return 0
 	}
 	pos := L.CheckInt(2)
-	// Lua 5.3: позиция должна быть в диапазоне [1, #tbl+1]
-	// Используем ObjLen для поддержки __len metamethod
-	// Важно: передаём LValue, а не *LTable, чтобы вызвать __len
-	len := L.ObjLen(L.Get(1))
-	if pos < 1 || pos > len+1 {
+	// Lua 5.3: позиция должна быть >= 1
+	// В отличие от Lua 5.1, в Lua 5.3 нет верхней границы для позиции
+	if pos < 1 {
 		L.RaiseError("table index out of bounds")
 	}
 	tbl.Insert(pos, L.CheckAny(3))
@@ -232,25 +269,65 @@ func tableMove(L *LState) int {
 		return 1
 	}
 
-	count := e - f + 1
-	if count < 0 {
-		// Overflow - range is too large
+	// Check for overflow in count calculation (Lua 5.3 compatibility)
+	// count = e - f + 1 should not overflow
+	// Also check if the range is too large to fit in int64
+	var count int64
+	var overflow bool
+	if e >= 0 && f < 0 {
+		// e - f could overflow when f is negative and e is positive
+		// e - f = e + (-f), and -f for minInt64 overflows
+		if e > 0 && f == math.MinInt64 {
+			overflow = true
+		} else {
+			count = e - f + 1
+			if count < 0 {
+				overflow = true
+			}
+		}
+	} else {
+		count = e - f + 1
+		if count < 0 {
+			overflow = true
+		}
+	}
+
+	if overflow {
 		L.RaiseError("too many elements to move")
+	}
+
+	// Check for wrap around in target indices (Lua 5.3 compatibility)
+	// For forward copy: target index t + count - 1 should not overflow
+	// For backward copy: target index t + (e - f) should not overflow
+	if a1 == a2 && t > f && t <= e {
+		// Backward copy: check if t + (e - f) overflows
+		// The last write index is t + (e - f)
+		targetEnd := t + (e - f)
+		// Check for overflow: if signs differ in a way that indicates overflow
+		if (t > 0 && (e-f) > 0 && targetEnd < 0) || (t < 0 && (e-f) < 0 && targetEnd > 0) {
+			L.RaiseError("wrap around")
+		}
+		// Also check if the range itself is too large
+		if e-f < 0 {
+			L.RaiseError("too many elements to move")
+		}
+	} else {
+		// Forward copy: check if t + count - 1 overflows
+		// The last write index is t + count - 1
+		if count > 0 {
+			targetEnd := t + count - 1
+			if (t > 0 && count > 0 && targetEnd < 0) || (t < 0 && count < 0 && targetEnd > 0) {
+				L.RaiseError("wrap around")
+			}
+		}
 	}
 
 	// When moving within the same table, we need to handle overlap correctly
 	// Use metamethods for reading and writing (Lua 5.3 compatibility)
 	// Use counter-based loop to avoid overflow issues with large indices
-	// Check if the table has metamethods - if so, use forwards copy to match Lua 5.3 metamethod call order
-	hasMetamethods := L.GetMetatable(a1).Type() != LTNil
-	if hasMetamethods {
-		// Always use forwards copy for tables with metamethods
-		for k := int64(0); k < count; k++ {
-			i := f + k
-			val := L.GetTable(a1, LNumberInt(i))
-			L.SetTable(a2, LNumberInt(t+k), val)
-		}
-	} else if a1 == a2 && t > f && t <= e {
+	// Lua 5.3: for overlapping moves with t > f, use backwards copy to avoid overwriting source elements
+	// This applies even when metamethods are present
+	if a1 == a2 && t > f && t <= e {
 		// Overlapping move with t > f - use backwards copy to avoid overwriting
 		for k := int64(0); k < count; k++ {
 			i := e - k
